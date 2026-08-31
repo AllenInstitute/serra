@@ -161,6 +161,16 @@ pub struct SimplifyOptions {
     pub max_error: f64,
 }
 
+/// Reusable buffers, so the safety checks allocate nothing per candidate.
+#[derive(Default)]
+struct Scratch {
+    of_u: Vec<u32>,
+    of_v: Vec<u32>,
+    shared: Vec<u32>,
+    opposite: Vec<u32>,
+    survivors: Vec<[u32; 3]>,
+}
+
 struct State {
     positions: Vec<[f64; 3]>,
     /// Where each vertex started. Never updated, so the displacement bound is
@@ -177,25 +187,30 @@ struct State {
 }
 
 impl State {
-    /// Vertices sharing a live face with `v`.
-    fn neighbours(&self, v: u32) -> FxHashSet<u32> {
-        let mut out = FxHashSet::default();
+    /// Vertices sharing a live face with `v`, into a caller-owned buffer.
+    ///
+    /// A vertex has around six neighbours, so a short sorted vector beats a
+    /// hash set comfortably — and reusing the caller's buffer keeps the hot
+    /// path free of allocation, which is where most of the time went before.
+    fn neighbours_into(&self, v: u32, out: &mut Vec<u32>) {
+        out.clear();
         for &f in &self.incident[v as usize] {
             if !self.face_alive[f as usize] {
                 continue;
             }
             for &w in &self.faces[f as usize] {
                 if w != v {
-                    out.insert(w);
+                    out.push(w);
                 }
             }
         }
-        out
+        out.sort_unstable();
+        out.dedup();
     }
 
     /// The vertices opposite edge `(u, v)` — one per face carrying that edge.
-    fn opposite(&self, u: u32, v: u32) -> FxHashSet<u32> {
-        let mut out = FxHashSet::default();
+    fn opposite_into(&self, u: u32, v: u32, out: &mut Vec<u32>) {
+        out.clear();
         for &f in &self.incident[u as usize] {
             if !self.face_alive[f as usize] {
                 continue;
@@ -204,16 +219,26 @@ impl State {
             if tri.contains(&v) {
                 for &w in &tri {
                     if w != u && w != v {
-                        out.insert(w);
+                        out.push(w);
                     }
                 }
             }
         }
-        out
+        out.sort_unstable();
+        out.dedup();
     }
 
     /// Every condition that has to hold for this collapse to be safe.
-    fn is_safe(&self, u: u32, v: u32, target: [f64; 3], max_error: f64) -> bool {
+    ///
+    /// `scratch` carries three reusable buffers so the checks allocate nothing.
+    fn is_safe(
+        &self,
+        u: u32,
+        v: u32,
+        target: [f64; 3],
+        max_error: f64,
+        scratch: &mut Scratch,
+    ) -> bool {
         if self.pinned[u as usize] || self.pinned[v as usize] {
             return false;
         }
@@ -230,16 +255,27 @@ impl State {
 
         // The link condition. Anything adjacent to both endpoints that is not
         // opposite the edge becomes a non-manifold junction after the merge.
-        let opposite = self.opposite(u, v);
-        if opposite.is_empty() {
+        self.opposite_into(u, v, &mut scratch.opposite);
+        if scratch.opposite.is_empty() {
             return false;
         }
-        let shared: FxHashSet<u32> = self
-            .neighbours(u)
-            .intersection(&self.neighbours(v))
-            .copied()
-            .collect();
-        if shared != opposite {
+        self.neighbours_into(u, &mut scratch.of_u);
+        self.neighbours_into(v, &mut scratch.of_v);
+        // Both lists are sorted, so the intersection is a merge walk.
+        scratch.shared.clear();
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < scratch.of_u.len() && j < scratch.of_v.len() {
+            match scratch.of_u[i].cmp(&scratch.of_v[j]) {
+                Ordering::Less => i += 1,
+                Ordering::Greater => j += 1,
+                Ordering::Equal => {
+                    scratch.shared.push(scratch.of_u[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        if scratch.shared != scratch.opposite {
             return false;
         }
 
@@ -249,7 +285,7 @@ impl State {
             return false;
         }
 
-        let mut survivors: Vec<[u32; 3]> = Vec::new();
+        scratch.survivors.clear();
         for &f in self.incident[u as usize]
             .iter()
             .chain(self.incident[v as usize].iter())
@@ -271,10 +307,10 @@ impl State {
             }
             let mut key = moved;
             key.sort_unstable();
-            if survivors.contains(&key) {
+            if scratch.survivors.contains(&key) {
                 return false; // two faces would end up coincident
             }
-            survivors.push(key);
+            scratch.survivors.push(key);
         }
         true
     }
@@ -322,11 +358,13 @@ impl State {
             }
         }
         self.dead_vertex[v as usize] = true;
+        // Only the two endpoints need invalidating. A neighbour's quadric is
+        // untouched by this collapse, so any queued edge between two of them
+        // still has the right cost; and anything that has become unsafe is
+        // caught by the check at pop time. Bumping the whole neighbourhood
+        // instead would churn the heap for nothing.
         self.stamp[u as usize] += 1;
         self.stamp[v as usize] += 1;
-        for w in self.neighbours(u) {
-            self.stamp[w as usize] += 1;
-        }
         let alive = &self.face_alive;
         self.incident[u as usize].retain(|&f| alive[f as usize]);
     }
@@ -468,6 +506,8 @@ pub fn simplify(mesh: &mut TriangleMesh, opts: &SimplifyOptions) -> usize {
     }
 
     let mut collapses = 0usize;
+    let mut scratch = Scratch::default();
+    let mut touched: Vec<u32> = Vec::with_capacity(16);
 
     while state.live_faces > opts.target_faces {
         let Some(c) = heap.pop() else { break };
@@ -479,14 +519,16 @@ pub fn simplify(mesh: &mut TriangleMesh, opts: &SimplifyOptions) -> usize {
             queue(&mut heap, &state, c.u, c.v);
             continue;
         }
-        if !state.is_safe(c.u, c.v, c.target, opts.max_error) {
+        if !state.is_safe(c.u, c.v, c.target, opts.max_error, &mut scratch) {
             continue;
         }
 
         state.apply(c.u, c.v, c.target);
         collapses += 1;
 
-        for w in state.neighbours(c.u) {
+        // Every edge at the merged vertex has a new cost.
+        state.neighbours_into(c.u, &mut touched);
+        for &w in touched.iter() {
             queue(&mut heap, &state, c.u, w);
         }
     }
