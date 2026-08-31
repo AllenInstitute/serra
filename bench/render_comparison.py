@@ -11,6 +11,7 @@ would hide precisely the artefact under comparison.
 zmesh is imported from a local checkout rather than PyPI so the comparison runs
 against the build you actually have. Point --zmesh at it.
 
+    uv sync --group bench          # pyvista is not a default dependency
     python bench/render_comparison.py --zmesh ../zmesh --out docs/images
 """
 

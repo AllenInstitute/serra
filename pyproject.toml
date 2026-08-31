@@ -19,7 +19,9 @@ classifiers = [
 dependencies = ["numpy>=1.21"]
 
 [project.urls]
-Homepage = "https://github.com/fcollman/serra"
+Homepage = "https://github.com/AllenInstitute/serra"
+Repository = "https://github.com/AllenInstitute/serra"
+Documentation = "https://alleninstitute.github.io/serra/"
 
 [tool.maturin]
 python-source = "python"

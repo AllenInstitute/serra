@@ -1,0 +1,64 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python }}
+      - name: Build the extension
+        run: uv run maturin develop --release
+      - name: Run the test suite
+        run: uv run pytest tests -q
+
+  rust:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --python 3.12
+      # Without extension-module the crate links libpython, so pyo3 needs to be
+      # told which interpreter to link against.
+      - name: Run the Rust unit tests
+        run: cargo test --no-default-features
+        env:
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
+
+  determinism:
+    name: output is thread-independent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --python 3.12
+      - run: uv run maturin develop --release
+      # The suite already compares thread counts internally; this pins the
+      # global rayon pool as well, which is what threads=0 defers to.
+      - name: Single-threaded
+        run: uv run pytest tests/test_determinism.py tests/test_seams.py -q
+        env:
+          RAYON_NUM_THREADS: 1

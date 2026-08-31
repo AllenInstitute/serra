@@ -1,0 +1,41 @@
+site_name: serra
+site_description: Analytical multi-material meshes from voxelized segmentations
+repo_url: https://github.com/AllenInstitute/serra
+repo_name: AllenInstitute/serra
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Chunked meshing: chunked.md
+      - Accuracy and smoothing: accuracy.md
+  - Developer guide: developer.md
+  - API reference: reference.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            docstring_style: numpy

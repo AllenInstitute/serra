@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.74"
 license = "MIT"
 description = "Analytical multi-material meshes from voxelized segmentations"
-repository = "https://github.com/fcollman/serra"
+repository = "https://github.com/AllenInstitute/serra"
 readme = "README.md"
 
 [lib]

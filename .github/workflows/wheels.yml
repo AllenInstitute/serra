@@ -1,0 +1,66 @@
+name: wheels
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform.os }} ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: linux, runner: ubuntu-latest, target: x86_64 }
+          - { os: linux, runner: ubuntu-24.04-arm, target: aarch64 }
+          - { os: macos, runner: macos-13, target: x86_64 }
+          - { os: macos, runner: macos-latest, target: aarch64 }
+          - { os: windows, runner: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      # The extension is built against Python's stable ABI (abi3-py39), so a
+      # single wheel per platform covers every Python from 3.9 up. That is why
+      # there is no Python version in this matrix.
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+          sccache: "true"
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  smoke-test:
+    name: install the wheel and import it
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      # Proves the abi3 claim: a wheel built on one Python must import on the
+      # oldest supported one.
+      - run: pip install numpy dist/*.whl
+      - run: python -c "import serra, numpy as np; a=np.zeros((8,8,8),np.uint32); a[2:6,2:6,2:6]=1; m=serra.Mesher().mesh(a, close=True).get(1); assert m.is_closed(); print('ok', serra.__version__, len(m.faces), 'faces')"
