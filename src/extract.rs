@@ -52,6 +52,28 @@ pub struct LabelMesh {
     pub positions: Vec<[i32; 3]>,
     /// Quads as indices into `positions`, wound so normals point outward.
     pub quads: Vec<[u32; 4]>,
+    /// Parallel to `positions`: vertices that relaxation must not move.
+    ///
+    /// Empty unless [`ExtractOptions::mark_boundary`] was set. See that field
+    /// for why these particular vertices are the ones to hold fixed.
+    pub pinned: Vec<bool>,
+}
+
+/// How to run a pass.
+#[derive(Clone, Copy, Default)]
+pub struct ExtractOptions {
+    /// Mark vertices in the outermost layer of cells as pinned.
+    ///
+    /// Those are exactly the vertices whose one-ring is incomplete: a cell in
+    /// the last layer has neighbours in the layer beyond, which this chunk does
+    /// not contain. Holding them fixed lets relaxation run on the interior
+    /// without ever consulting data the chunk does not have, so a chunk's mesh
+    /// stays a pure function of its own array however many iterations are used
+    /// — the halo never has to grow past one voxel.
+    ///
+    /// Leave unset when meshing a whole volume with `close`, where the outermost
+    /// cell layer is the sealing cap and has nothing beyond it to be missing.
+    pub mark_boundary: bool,
 }
 
 /// Everything a pass over the volume produced.
@@ -135,8 +157,13 @@ fn all_equal<T: PartialEq>(c: &[T; 8]) -> bool {
         && c[7] == c[0]
 }
 
-/// Extract every label's surface in a single traversal.
+/// Extract every label's surface in a single traversal, with default options.
 pub fn extract<T: Label>(view: &VolumeView<T>) -> Extraction {
+    extract_with(view, &ExtractOptions::default())
+}
+
+/// Extract every label's surface in a single traversal.
+pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Extraction {
     let nc = view.cell_counts();
     let lo = view.sample_lo();
     if nc[0] == 0 || nc[1] == 0 || nc[2] == 0 {
@@ -172,6 +199,13 @@ pub fn extract<T: Label>(view: &VolumeView<T>) -> Extraction {
                 }
 
                 // --- vertices ------------------------------------------------
+                let on_boundary = opts.mark_boundary
+                    && (cx == 0
+                        || cy == 0
+                        || cz == 0
+                        || cx + 1 == nc[0]
+                        || cy + 1 == nc[1]
+                        || cz + 1 == nc[2]);
                 let position = cell_vertex(origin, crossing_mask(&corners));
                 let mut corner_vertex: CornerVertices = [NO_VERTEX; 8];
 
@@ -196,6 +230,9 @@ pub fn extract<T: Label>(view: &VolumeView<T>) -> Extraction {
                     // diagonally. All components share the cell's position.
                     for _ in 0..TABLES.ncomp[mask] {
                         mesh.positions.push(position);
+                        if opts.mark_boundary {
+                            mesh.pinned.push(on_boundary);
+                        }
                     }
                     let split = &TABLES.split[mask];
                     for k in 0..8 {

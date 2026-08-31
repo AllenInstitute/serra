@@ -30,6 +30,16 @@ class Mesher:
         emitted.
     y_down:
         Set for the image convention where Y increases downward.
+    relaxation:
+        Iterations of constrained smoothing. Zero (the default) uses purely
+        local vertex placement. Raising it gives a smoother surface, more
+        accurate area and better normals, at some cost in speed.
+    max_deviation:
+        How far relaxation may move a vertex from where local placement put it,
+        in voxels. This bounds how far the surface can stray from the data and
+        stops smoothing from shrinking objects away.
+    relaxation_step:
+        Fraction of the way to the neighbour average per iteration, in (0, 1].
 
     Notes
     -----
@@ -39,6 +49,13 @@ class Mesher:
     the pieces stitch together by vertex deduplication alone. A smaller overlap
     leaves the dual cells along the seam unshared, and the surfaces will not
     meet.
+
+    One voxel of halo is enough at *any* ``relaxation`` setting. Relaxation
+    holds the outermost layer of cells fixed, so it never reads past the halo
+    and a chunk's mesh stays reproducible from that chunk's array alone. The
+    trade-off is that a chunk's interior is smoothed slightly more than the band
+    around its seams, so a stitched surface is self-consistent and watertight
+    but not identical to the same volume meshed in one piece.
 
     Examples
     --------
@@ -53,14 +70,25 @@ class Mesher:
         voxel_resolution: Sequence[float] = (1.0, 1.0, 1.0),
         axis_order: str = "XYZ",
         y_down: bool = False,
+        relaxation: int = 0,
+        max_deviation: float = 0.5,
+        relaxation_step: float = 0.5,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
         self.axis_order = axis_order
         self.y_down = y_down
+        self.relaxation = int(relaxation)
+        self.max_deviation = float(max_deviation)
+        self.relaxation_step = float(relaxation_step)
+        if self.relaxation < 0:
+            raise ValueError("relaxation must be non-negative")
         self._inner = _serra.Mesher(
             voxel_resolution=[float(v) for v in self.voxel_resolution],
             axis_order=axis_order,
             y_down=y_down,
+            relaxation=self.relaxation,
+            max_deviation=self.max_deviation,
+            relaxation_step=self.relaxation_step,
         )
 
     def mesh(self, data: np.ndarray, close: bool = False) -> "Mesher":
@@ -142,5 +170,6 @@ class Mesher:
     def __repr__(self) -> str:
         return (
             f"Mesher(voxel_resolution={self.voxel_resolution.tolist()}, "
-            f"axis_order={self.axis_order!r}, objects={len(self)})"
+            f"axis_order={self.axis_order!r}, relaxation={self.relaxation}, "
+            f"objects={len(self)})"
         )

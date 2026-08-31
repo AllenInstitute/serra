@@ -13,10 +13,11 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray3};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::extract::{extract, Extraction};
+use crate::extract::{extract_with, ExtractOptions, Extraction};
 use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
+use crate::place::{relax, Relaxation};
 
 /// Arrays handed back for one object: vertices, faces, and optionally normals.
 type MeshArrays<'py> = (
@@ -30,6 +31,7 @@ type MeshArrays<'py> = (
 pub struct Mesher {
     resolution: [f64; 3],
     layout: Layout,
+    relaxation: Relaxation,
     shape: [usize; 3],
     extraction: Option<Extraction>,
 }
@@ -38,21 +40,53 @@ fn run<'py, T: Label + numpy::Element>(
     py: Python<'py>,
     array: PyReadonlyArray3<'py, T>,
     close: bool,
+    relaxation: Relaxation,
 ) -> ([usize; 3], Extraction) {
     let view = array.as_array();
     let s = view.shape();
     let shape = [s[0], s[1], s[2]];
-    // The extraction touches no Python objects, so the GIL is released
-    // (pyo3 0.29 spells this `detach`) and other threads can run.
-    let extraction = py.detach(move || extract(&VolumeView::new(view, close)));
+
+    // Relaxation must not move vertices whose one-ring the chunk does not
+    // fully contain, so the outermost layer of cells is pinned. With `close`
+    // there is nothing beyond that layer to be missing, so nothing is pinned
+    // and the whole surface is free to smooth.
+    let options = ExtractOptions {
+        mark_boundary: relaxation.iterations > 0 && !close,
+    };
+
+    // Neither step touches a Python object, so the GIL is released (pyo3 0.29
+    // spells this `detach`) and other threads can run.
+    let extraction = py.detach(move || {
+        let mut extraction = extract_with(&VolumeView::new(view, close), &options);
+        if relaxation.iterations > 0 {
+            for mesh in extraction.meshes.iter_mut() {
+                relax(mesh, &relaxation);
+            }
+        }
+        extraction
+    });
     (shape, extraction)
 }
 
 #[pymethods]
 impl Mesher {
     #[new]
-    #[pyo3(signature = (voxel_resolution=vec![1.0, 1.0, 1.0], axis_order="XYZ", y_down=false))]
-    fn new(voxel_resolution: Vec<f64>, axis_order: &str, y_down: bool) -> PyResult<Self> {
+    #[pyo3(signature = (
+        voxel_resolution=vec![1.0, 1.0, 1.0],
+        axis_order="XYZ",
+        y_down=false,
+        relaxation=0,
+        max_deviation=0.5,
+        relaxation_step=0.5,
+    ))]
+    fn new(
+        voxel_resolution: Vec<f64>,
+        axis_order: &str,
+        y_down: bool,
+        relaxation: u32,
+        max_deviation: f64,
+        relaxation_step: f64,
+    ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
             return Err(PyValueError::new_err(format!(
                 "voxel_resolution must have 3 entries, got {}",
@@ -70,6 +104,14 @@ impl Mesher {
         if y_down {
             layout = layout.with_flipped_physical_axis(1);
         }
+        if !max_deviation.is_finite() || max_deviation < 0.0 {
+            return Err(PyValueError::new_err(
+                "max_deviation must be finite and non-negative",
+            ));
+        }
+        if !relaxation_step.is_finite() || relaxation_step <= 0.0 || relaxation_step > 1.0 {
+            return Err(PyValueError::new_err("relaxation_step must lie in (0, 1]"));
+        }
         Ok(Mesher {
             resolution: [
                 voxel_resolution[0],
@@ -77,6 +119,11 @@ impl Mesher {
                 voxel_resolution[2],
             ],
             layout,
+            relaxation: Relaxation {
+                iterations: relaxation,
+                max_deviation,
+                step: relaxation_step,
+            },
             shape: [0; 3],
             extraction: None,
         })
@@ -96,7 +143,7 @@ impl Mesher {
         macro_rules! attempt {
             ($t:ty) => {
                 if let Ok(array) = labels.extract::<PyReadonlyArray3<$t>>() {
-                    let (shape, extraction) = run(py, array, close);
+                    let (shape, extraction) = run(py, array, close, self.relaxation);
                     self.shape = shape;
                     self.extraction = Some(extraction);
                     return Ok(());

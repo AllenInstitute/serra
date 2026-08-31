@@ -41,8 +41,9 @@ Other properties:
 - **2-manifold per object.** No non-manifold vertices or edges. Cells where a label
   touches itself only diagonally get their vertex split per connected component.
 - **Watertight** inside the volume; open only where an object runs off the edge.
-- **Deterministic.** Identical output regardless of thread count or whether the
-  input array is C- or Fortran-ordered.
+- **Deterministic.** Identical output regardless of thread count, memory order,
+  dtype width, or platform — including under relaxation, which uses Jacobi
+  iteration so no result depends on visit order.
 - **Chunk-seam exact.** Meshed with a 1-voxel halo, vertices on a shared seam are
   bit-identical between neighbouring chunks, so chunks stitch by vertex dedup alone.
 
@@ -53,8 +54,16 @@ Each chunk owns a disjoint range of voxels and is passed to `mesh()` with a
 This is what makes the dual cells along a seam shared between both chunks, and
 therefore what makes their vertices identical.
 
-Enabling `relaxation=k` widens the required halo to `k + 1`, because relaxation
-propagates position information one cell per iteration.
+**One voxel of halo is enough at any `relaxation` setting.** Iterative smoothing
+normally propagates one cell per iteration, which would mean `k` iterations need
+`k + 1` voxels of halo. serra instead holds the outermost layer of cells fixed —
+precisely the vertices whose one-ring the chunk does not fully contain — so
+relaxation never reads past the halo. A chunk's mesh is therefore reproducible
+from that chunk's own array alone, whatever `k` is.
+
+The trade-off is deliberate: a chunk's interior smooths slightly more than the
+band around its seams, so a stitched surface is self-consistent and watertight,
+but not identical to the same volume meshed in one piece.
 
 ## Status
 

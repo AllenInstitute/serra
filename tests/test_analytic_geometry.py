@@ -11,8 +11,9 @@ one is justified where it is asserted. Two systematic biases matter:
   length. Smooth shapes are unaffected; a cylinder's two flat end rims are not.
 
 Both are properties of purely local vertex placement, which is what buys exact
-chunk seams. The optional relaxation pass trades halo width for improvement on
-both counts.
+chunk seams. The optional relaxation pass improves both without costing any
+halo — see test_relaxation.py, where k=3 brings the sphere's area error down to
+about +0.24% and k=25 brings mean normal error under 1 degree.
 """
 
 from __future__ import annotations
