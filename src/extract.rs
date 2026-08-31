@@ -73,6 +73,19 @@ impl Extraction {
     pub fn mesh(&self, label: u64) -> Option<&LabelMesh> {
         self.position_of(label).map(|i| &self.meshes[i])
     }
+
+    /// Drop one label's surface, freeing its memory. Returns whether it was
+    /// there to begin with.
+    pub fn remove(&mut self, label: u64) -> bool {
+        match self.position_of(label) {
+            Some(i) => {
+                self.labels.remove(i);
+                self.meshes.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Per-cell record for one slab: for each of the 8 corners, the vertex it

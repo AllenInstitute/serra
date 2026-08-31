@@ -8,6 +8,7 @@ pub mod grid;
 pub mod mesh;
 pub mod orient;
 pub mod place;
+pub mod python;
 pub mod tables;
 
 use pyo3::prelude::*;
@@ -15,5 +16,6 @@ use pyo3::prelude::*;
 #[pymodule]
 fn _serra(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    python::register(m)?;
     Ok(())
 }

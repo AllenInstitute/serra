@@ -39,7 +39,9 @@ default-groups = ["dev", "docs", "lint"]
 testpaths = ["tests"]
 
 [tool.ruff]
-extend-exclude = ["*.ipynb"]
+# Documentation prose is formatted by hand; ruff also reflows Python code
+# blocks inside Markdown, which mangles aligned comments in examples.
+extend-exclude = ["*.ipynb", "*.md"]
 
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]
