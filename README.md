@@ -1,6 +1,7 @@
 # serra
 
 Analytical multi-material meshes from voxelized segmentations.
+It is named after the artist Richard Serra, who is known for making beautiful smooth geometric forms out of rusted metal.
 
 `serra` turns a 3-D array of integer labels into one triangle mesh per label. It is
 built for connectomics-scale data, where a single chunk may contain hundreds of
