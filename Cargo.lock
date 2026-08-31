@@ -251,6 +251,7 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 name = "serra"
 version = "0.0.1"
 dependencies = [
+ "ndarray",
  "numpy",
  "pyo3",
  "rayon",

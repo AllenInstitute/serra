@@ -18,6 +18,8 @@ pyo3 = { version = "0.29", features = ["abi3-py39"] }
 # version tracks pyo3's — not the Python numpy package. That one is pinned in
 # pyproject.toml as numpy>=1.21.
 numpy = "0.29"
+# Used directly for the strided, zero-copy view over the caller's array.
+ndarray = "0.17"
 rayon = "1.12"
 rustc-hash = "2.1"
 

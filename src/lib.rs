@@ -3,6 +3,10 @@
 //! The crate is organised as a pipeline, one module per stage. See
 //! `docs/developer.md` for how they fit together.
 
+pub mod grid;
+pub mod orient;
+pub mod tables;
+
 use pyo3::prelude::*;
 
 #[pymodule]
