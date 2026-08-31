@@ -221,6 +221,7 @@ mod tests {
         });
         let opts = ExtractOptions {
             mark_boundary: true,
+            ..Default::default()
         };
         let mut e = extract_with(&VolumeView::new(a.view(), false), &opts);
         e.meshes.remove(0)

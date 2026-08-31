@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Iterator, Sequence
+from typing import Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 
@@ -115,7 +115,12 @@ class Mesher:
         """Threads actually used: the configured count, or every core when 0."""
         return self._inner.effective_threads
 
-    def mesh(self, data: np.ndarray, close: bool = False) -> "Mesher":
+    def mesh(
+        self,
+        data: np.ndarray,
+        close: bool = False,
+        owned_shape: Optional[Sequence[int]] = None,
+    ) -> "Mesher":
         """Extract every object's surface from ``data``.
 
         Parameters
@@ -128,6 +133,23 @@ class Mesher:
             Treat the volume as surrounded by background, so objects touching
             the array edge come back sealed. The border is virtual, so this
             costs no extra memory.
+        owned_shape:
+            When meshing one chunk of a larger volume, how many voxels along
+            each axis this chunk owns, counted from index 0. Faces are emitted
+            only for the owned region, so each one belongs to exactly one
+            chunk: concatenating the chunks and deduplicating vertices then
+            reproduces the whole-volume mesh with no duplicate faces.
+
+            **Wherever a neighbouring chunk exists, the array must extend two
+            voxels past the owned region along that axis.** Dual contouring
+            reads two cell layers per face, so one voxel of halo — enough for
+            marching cubes — leaves a hole along the seam. Only the positive
+            side needs it, which keeps the fetch within the next chunk.
+
+            At the far edge of the volume there is no neighbour and no halo is
+            needed, so the last chunk simply owns everything it holds.
+
+            Leave it ``None`` when the array is the whole volume.
 
         Returns
         -------
@@ -142,7 +164,21 @@ class Mesher:
             )
         if data.dtype.kind != "u":
             raise TypeError(f"expected unsigned integer labels, got {data.dtype}")
-        self._inner.mesh(data, close=close)
+        if owned_shape is not None:
+            owned_shape = [int(v) for v in owned_shape]
+            if len(owned_shape) != 3:
+                raise ValueError(
+                    f"owned_shape must have 3 entries, got {len(owned_shape)}"
+                )
+            for axis, (owned, size) in enumerate(zip(owned_shape, data.shape)):
+                if owned < 1:
+                    raise ValueError("owned_shape entries must be positive")
+                if owned > size:
+                    raise ValueError(
+                        f"axis {axis}: cannot own {owned} voxels of an array with "
+                        f"{size}"
+                    )
+        self._inner.mesh(data, close=close, owned_shape=owned_shape)
         return self
 
     def ids(self) -> np.ndarray:

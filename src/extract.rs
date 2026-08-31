@@ -75,6 +75,45 @@ pub struct ExtractOptions {
     /// Leave unset when meshing a whole volume with `close`, where the outermost
     /// cell layer is the sealing cap and has nothing beyond it to be missing.
     pub mark_boundary: bool,
+
+    /// How many cells along each axis this chunk owns, counted from index 0.
+    ///
+    /// Set this when meshing one chunk of a larger volume. Cells beyond the
+    /// owned range are halo: they are still built, because quads need them, but
+    /// the quads *belonging* to them are left to the chunk that owns them. That
+    /// is what stops two neighbouring chunks from both emitting the wall on
+    /// their shared seam, which would leave duplicate faces after stitching.
+    ///
+    /// One halo cell per axis is required, so the array must extend two voxels
+    /// past the owned region — see [`owns_quad`].
+    ///
+    /// `None` means the array is the whole volume and every quad is emitted.
+    pub owned_cells: Option<[usize; 3]>,
+}
+
+/// Whether this chunk should emit the quad dual to the edge leaving `cell`
+/// along `axis`.
+///
+/// The quad is built from four cells: the same index along `axis`, and one
+/// lower or equal along the other two. Assigning it to the chunk owning the
+/// *minimum* of those four gives every quad exactly one owner across a
+/// decomposition, with no gaps and no duplicates.
+///
+/// The chunk therefore needs cells one past its owned range, hence two voxels
+/// of halo. With only one voxel — enough for marching cubes, which reads a
+/// single cell per quad — the four cells straddling a seam are split between
+/// two chunks and neither can emit, leaving a hole.
+#[inline]
+fn owns_quad(owned: &Option<[usize; 3]>, cell: [usize; 3], axis: usize) -> bool {
+    let Some(owned) = owned else {
+        return true;
+    };
+    let u = (axis + 1) % 3;
+    let v = (axis + 2) % 3;
+    let mut lowest = [cell[0] as isize, cell[1] as isize, cell[2] as isize];
+    lowest[u] -= 1;
+    lowest[v] -= 1;
+    (0..3).all(|k| lowest[k] >= 0 && (lowest[k] as usize) < owned[k])
 }
 
 /// Everything a pass over the volume produced.
@@ -226,7 +265,7 @@ pub fn extract_parallel<T: Label + Sync>(
         .map(|&(start, end)| extract_band(view, opts, nc, lo, start, end, start == 0))
         .collect();
 
-    merge(view, nc, lo, outputs)
+    merge(view, nc, lo, outputs, &opts.owned_cells)
 }
 
 /// Divide `total` layers into `parts` contiguous ranges, largest first.
@@ -357,7 +396,10 @@ fn extract_band<T: Label>(
                     let far = 1usize << axis;
                     let lower = corners[0];
                     let upper = corners[far];
-                    if lower == upper || (lower == T::BACKGROUND && upper == T::BACKGROUND) {
+                    if lower == upper
+                        || (lower == T::BACKGROUND && upper == T::BACKGROUND)
+                        || !owns_quad(&opts.owned_cells, [cx, cy, cz], axis)
+                    {
                         continue;
                     }
 
@@ -475,6 +517,7 @@ fn merge<T: Label + Sync>(
     nc: [usize; 3],
     lo: [isize; 3],
     mut bands: Vec<Band>,
+    owned: &Option<[usize; 3]>,
 ) -> Extraction {
     let mut all: Vec<u64> = bands
         .iter()
@@ -521,7 +564,7 @@ fn merge<T: Label + Sync>(
     // Each seam's quads, bucketed by global label. Seams are independent.
     let seams: Vec<Vec<Vec<[u32; 4]>>> = (1..bands.len())
         .into_par_iter()
-        .map(|b| seam_quads(view, nc, lo, &bands, &offsets, &global, count, b))
+        .map(|b| seam_quads(view, nc, lo, &bands, &offsets, &global, count, b, owned))
         .collect();
 
     // Now the quads, in cell order: band 0, then seam 1, then band 1, and so on.
@@ -574,6 +617,7 @@ fn seam_quads<T: Label>(
     global: &FxHashMap<u64, usize>,
     count: usize,
     b: usize,
+    owned: &Option<[usize; 3]>,
 ) -> Vec<Vec<[u32; 4]>> {
     let mut out: Vec<Vec<[u32; 4]>> = vec![Vec::new(); count];
 
@@ -605,7 +649,10 @@ fn seam_quads<T: Label>(
                 let far = 1usize << axis;
                 let lower = corners[0];
                 let upper = corners[far];
-                if lower == upper || (lower == T::BACKGROUND && upper == T::BACKGROUND) {
+                if lower == upper
+                    || (lower == T::BACKGROUND && upper == T::BACKGROUND)
+                    || !owns_quad(owned, [cx, cy, cz], axis)
+                {
                     continue;
                 }
 

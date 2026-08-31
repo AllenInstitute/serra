@@ -49,6 +49,7 @@ fn run<'py, T: Label + numpy::Element>(
     relaxation: Relaxation,
     threads: usize,
     pool: Option<&rayon::ThreadPool>,
+    owned_cells: Option<[usize; 3]>,
 ) -> ([usize; 3], Extraction) {
     let view = array.as_array();
     let s = view.shape();
@@ -60,6 +61,7 @@ fn run<'py, T: Label + numpy::Element>(
     // and the whole surface is free to smooth.
     let options = ExtractOptions {
         mark_boundary: relaxation.iterations > 0 && !close,
+        owned_cells,
     };
 
     // Neither step touches a Python object, so the GIL is released (pyo3 0.29
@@ -173,11 +175,28 @@ impl Mesher {
     /// With `close`, the volume is treated as if surrounded by background, so
     /// objects reaching the array edge come back sealed. This costs nothing:
     /// the border is virtual, not a padded copy of the input.
-    #[pyo3(signature = (labels, close=false))]
-    fn mesh(&mut self, py: Python<'_>, labels: &Bound<'_, PyAny>, close: bool) -> PyResult<()> {
+    #[pyo3(signature = (labels, close=false, owned_shape=None))]
+    fn mesh(
+        &mut self,
+        py: Python<'_>,
+        labels: &Bound<'_, PyAny>,
+        close: bool,
+        owned_shape: Option<Vec<usize>>,
+    ) -> PyResult<()> {
         // Free the previous result before building the next one, so peak memory
         // is one extraction rather than two.
         self.extraction = None;
+
+        let owned_cells = match owned_shape {
+            None => None,
+            Some(v) if v.len() == 3 => Some([v[0], v[1], v[2]]),
+            Some(v) => {
+                return Err(PyValueError::new_err(format!(
+                    "owned_shape must have 3 entries, got {}",
+                    v.len()
+                )))
+            }
+        };
 
         macro_rules! attempt {
             ($t:ty) => {
@@ -189,6 +208,7 @@ impl Mesher {
                         self.relaxation,
                         self.threads,
                         self.pool.as_deref(),
+                        owned_cells,
                     );
                     self.shape = shape;
                     self.extraction = Some(extraction);

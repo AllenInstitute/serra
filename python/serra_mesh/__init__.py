@@ -12,5 +12,6 @@ single pass over the volume.
 from serra_mesh._serra_mesh import __version__
 from serra_mesh.mesh import Mesh
 from serra_mesh.mesher import Mesher
+from serra_mesh.stitch import stitch
 
-__all__ = ["Mesher", "Mesh", "__version__"]
+__all__ = ["Mesher", "Mesh", "stitch", "__version__"]
