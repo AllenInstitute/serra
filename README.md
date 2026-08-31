@@ -77,16 +77,18 @@ python bench/render_comparison.py --zmesh ../zmesh --out docs/images
 
 ## Performance
 
-On the 512³ connectomics volume (2524 objects), single-threaded, Apple M4 Pro:
+On the 512³ connectomics volume (2524 objects), Apple M4 Pro (14 cores):
 
-| | serra | zmesh |
-| --- | --- | --- |
-| `mesh()` — traverse the volume | 1.49 s | **1.22 s** |
-| `get()` — extract all 2524 objects | **0.81 s** | 23.2 s |
-| peak RSS | **2.5 GB** | 4.8 GB |
-| output | 44.8M vertices / 89.2M faces | 45.0M / 89.5M |
+| | serra (1 thread) | serra (14 threads) | zmesh |
+| --- | --- | --- | --- |
+| `mesh()` — traverse the volume | 1.52 s | **0.29 s** | 1.22 s |
+| `get()` — extract all 2524 objects | **0.81 s** | 0.81 s | 23.2 s |
+| peak RSS | **2.0 GB** | 2.8 GB | 3.2 GB |
+| output | 44.8M vertices / 89.2M faces | same | 45.0M / 89.5M |
 
-zmesh is about 20% faster at traversing the volume. serra is roughly 29× faster
+zmesh has no threading, so the fair single-threaded comparison is the first
+column: it is about 20% faster at traversing the volume there. Traversal scales
+to 5.2× on 14 cores, at the cost of about 0.8 GB for the merge. serra is roughly 29× faster
 at extraction, which needs explaining because it is an architectural difference
 rather than a tuning one.
 
@@ -109,6 +111,41 @@ Reproduce with:
 python bench/compare_zmesh.py serra
 python bench/compare_zmesh.py zmesh
 ```
+
+### Controlling parallelism
+
+```python
+serra.Mesher(threads=0)   # default: every core
+serra.Mesher(threads=1)   # fully sequential
+serra.Mesher(threads=4)   # exactly four
+```
+
+**Set `threads=1` if you are already parallelising at a higher level** — one
+chunk per process in a pipeline, say — otherwise every process tries to claim
+every core and they fight each other.
+
+Any value above 1 gets a private thread pool, so the setting is honoured
+exactly, is not overridden by `RAYON_NUM_THREADS`, and does not disturb other
+users of rayon in the same process. Only `threads=0` defers to
+`RAYON_NUM_THREADS`. `mesher.effective_threads` reports what will actually be
+used.
+
+Scaling on the volume above, and peak memory measured in a fresh process each
+time:
+
+| threads | `mesh()` | speedup | peak RSS |
+| --- | --- | --- | --- |
+| 1 | 1.52 s | 1.0× | 2.0 GB |
+| 2 | 0.95 s | 1.6× | |
+| 4 | 0.54 s | 2.8× | |
+| 8 | 0.33 s | 4.6× | |
+| 14 | 0.29 s | 5.2× | 2.8 GB |
+
+**Output is byte-identical at every thread count**, which the test suite checks
+directly rather than assuming. The volume is split into bands along one axis; a
+band cannot emit its own first cell layer's quads, since those read the layer
+below, so a short serial pass produces them afterwards and splices them into
+each label's face list in the position a single traversal would have put them.
 
 ## Chunked meshing
 

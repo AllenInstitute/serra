@@ -30,7 +30,9 @@ def multilabel_volume(shape=(24, 20, 18), labels=6, seed=0):
     grid = np.indices(shape).astype(np.float64)
     a = np.zeros(shape, np.uint32)
     for n in range(labels):
-        centre = rng.uniform(3, min(shape) - 3, size=3)
+        # Placed per axis, so the helper works for thin volumes too rather than
+        # assuming every axis is comfortably larger than the radius.
+        centre = np.array([rng.uniform(0.25 * s, 0.75 * s) for s in shape])
         radius = rng.uniform(3.0, 6.0)
         d = sum((grid[k] - centre[k]) ** 2 for k in range(3))
         a[d <= radius**2] = n + 1
@@ -160,14 +162,46 @@ class TestLabelValues:
 
 
 class TestThreadIndependence:
-    """Guards the parallel extraction that is still to be added.
+    """Extraction is split into bands along one axis and merged.
 
-    Passes trivially today, since extraction is single-threaded. It exists so
-    that introducing rayon cannot silently make output depend on how work was
-    scheduled — the failure mode would be a mesh that differs between machines.
+    The failure mode this guards against is subtle: geometry can be perfectly
+    correct while *ordering* depends on how many bands were used, which would
+    make output differ between machines. It happened during development — a
+    band cannot emit its own first cell layer's quads, and appending those at
+    the end instead of splicing them between the bands they sit between changed
+    every label's face order.
     """
 
-    SCRIPT = textwrap.dedent(
+    @pytest.mark.parametrize("shape", [(40, 36, 32), (17, 23, 97), (8, 8, 9)])
+    def test_every_thread_count_agrees(self, shape):
+        a = multilabel_volume(shape=shape, labels=7, seed=5)
+        prints = {
+            t: mesh_and_fingerprint(a, threads=t) for t in (1, 2, 3, 4, 5, 8, 13, 0)
+        }
+        assert len(set(prints.values())) == 1, prints
+
+    @pytest.mark.parametrize("k", [0, 3])
+    def test_relaxation_is_also_thread_independent(self, k):
+        a = multilabel_volume(shape=(40, 36, 32), labels=8, seed=2)
+        one = mesh_and_fingerprint(a, threads=1, relaxation=k)
+        many = mesh_and_fingerprint(a, threads=0, relaxation=k)
+        assert one == many
+
+    def test_a_volume_too_shallow_to_band_still_works(self):
+        """Fewer layers than the minimum band depth must fall back cleanly."""
+        a = multilabel_volume(shape=(20, 20, 3), labels=4, seed=7)
+        assert mesh_and_fingerprint(a, threads=1) == mesh_and_fingerprint(a, threads=8)
+
+    def test_thread_count_is_reported(self):
+        assert serra.Mesher(threads=3).effective_threads == 3
+        assert serra.Mesher(threads=1).effective_threads == 1
+        assert serra.Mesher(threads=0).effective_threads >= 1
+
+    def test_negative_thread_count_rejected(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            serra.Mesher(threads=-1)
+
+    ENV_SCRIPT = textwrap.dedent(
         """
         import hashlib, sys
         import numpy as np
@@ -182,7 +216,7 @@ class TestThreadIndependence:
     def _run(self, threads):
         env = dict(os.environ)
         env["RAYON_NUM_THREADS"] = str(threads)
-        script = self.SCRIPT.format(tests_dir=os.path.dirname(__file__))
+        script = self.ENV_SCRIPT.format(tests_dir=os.path.dirname(__file__))
         out = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True,
@@ -192,8 +226,7 @@ class TestThreadIndependence:
         )
         return out.stdout.strip()
 
-    def test_one_thread_matches_many(self):
+    def test_rayon_num_threads_does_not_change_output(self):
+        """threads=0 defers to RAYON_NUM_THREADS, so that must not matter."""
         assert self._run(1) == self._run(8)
-
-    def test_two_threads_match_one(self):
         assert self._run(2) == self._run(1)

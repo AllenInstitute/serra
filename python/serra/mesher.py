@@ -40,6 +40,20 @@ class Mesher:
         stops smoothing from shrinking objects away.
     relaxation_step:
         Fraction of the way to the neighbour average per iteration, in (0, 1].
+    threads:
+        How many threads to use. ``0`` (the default) uses every core; ``1``
+        runs fully sequentially; any other value uses exactly that many.
+
+        Set ``threads=1`` when you are already parallelising at a higher level
+        — running one chunk per process in a pipeline, for instance — otherwise
+        each process will try to claim every core and they will fight.
+
+        Values above 1 get a private thread pool, so the setting is honoured
+        exactly, is not overridden by ``RAYON_NUM_THREADS``, and does not
+        disturb other users of rayon in the same process. Only ``threads=0``
+        defers to ``RAYON_NUM_THREADS``.
+
+        Output is byte-identical whatever this is set to.
 
     Notes
     -----
@@ -73,6 +87,7 @@ class Mesher:
         relaxation: int = 0,
         max_deviation: float = 0.5,
         relaxation_step: float = 0.5,
+        threads: int = 0,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
         self.axis_order = axis_order
@@ -80,8 +95,11 @@ class Mesher:
         self.relaxation = int(relaxation)
         self.max_deviation = float(max_deviation)
         self.relaxation_step = float(relaxation_step)
+        self.threads = int(threads)
         if self.relaxation < 0:
             raise ValueError("relaxation must be non-negative")
+        if self.threads < 0:
+            raise ValueError("threads must be non-negative (0 means all cores)")
         self._inner = _serra.Mesher(
             voxel_resolution=[float(v) for v in self.voxel_resolution],
             axis_order=axis_order,
@@ -89,7 +107,13 @@ class Mesher:
             relaxation=self.relaxation,
             max_deviation=self.max_deviation,
             relaxation_step=self.relaxation_step,
+            threads=self.threads,
         )
+
+    @property
+    def effective_threads(self) -> int:
+        """Threads actually used: the configured count, or every core when 0."""
+        return self._inner.effective_threads
 
     def mesh(self, data: np.ndarray, close: bool = False) -> "Mesher":
         """Extract every object's surface from ``data``.
@@ -171,5 +195,5 @@ class Mesher:
         return (
             f"Mesher(voxel_resolution={self.voxel_resolution.tolist()}, "
             f"axis_order={self.axis_order!r}, relaxation={self.relaxation}, "
-            f"objects={len(self)})"
+            f"threads={self.effective_threads}, objects={len(self)})"
         )

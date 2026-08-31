@@ -177,3 +177,43 @@ class TestOpenSurfaces:
         """Degenerate but legal: every voxel is the same label."""
         a = np.ones((6, 6, 6), np.uint32)
         assert_valid_closed_surface(mesh_all(a, close=True)[1], expected_euler=2)
+
+
+class TestBandedExtraction:
+    """The seam pass is separate code from the main traversal.
+
+    Extraction is split into bands along one axis, and the quads on each band's
+    first cell layer are produced by a distinct routine afterwards. If it got
+    the vertex bookkeeping wrong the surface would tear along regularly spaced
+    planes, so these check watertightness specifically under threading.
+    """
+
+    @pytest.mark.parametrize("threads", [1, 2, 4, 8, 14])
+    def test_sphere_stays_closed_however_it_is_banded(self, threads):
+        mask = sphere_mask(24)
+        mesher = serra.Mesher(threads=threads).mesh(mask, close=True)
+        assert_valid_closed_surface(mesher.get(1), expected_euler=2)
+
+    @pytest.mark.parametrize("threads", [1, 4, 14])
+    def test_many_objects_all_stay_closed(self, threads):
+        """A tall stack, so several bands cut through every object."""
+        a = np.zeros((30, 30, 120), np.uint32)
+        grid = np.indices(a.shape)
+        for n in range(6):
+            centre = (15, 15, 12 + n * 19)
+            d = sum((grid[k] - centre[k]) ** 2 for k in range(3))
+            a[d <= 8**2] = n + 1
+        mesher = serra.Mesher(threads=threads).mesh(a, close=True)
+        assert len(mesher) == 6
+        for label in mesher.ids():
+            assert_valid_closed_surface(mesher.get(int(label)), expected_euler=2)
+
+    def test_an_object_spanning_every_band_stays_closed(self):
+        """A tube running the full length of the banded axis."""
+        a = np.zeros((24, 24, 160), np.uint32)
+        y, x = np.ogrid[:24, :24]
+        disc = (y - 11.5) ** 2 + (x - 11.5) ** 2 <= 7**2
+        a[:, :, 4:156][disc] = 1
+        for threads in (1, 14):
+            mesh = serra.Mesher(threads=threads).mesh(a, close=True).get(1)
+            assert_valid_closed_surface(mesh, expected_euler=2)

@@ -12,8 +12,9 @@ use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray3};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
-use crate::extract::{extract_with, ExtractOptions, Extraction};
+use crate::extract::{extract_parallel, ExtractOptions, Extraction};
 use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
@@ -32,6 +33,11 @@ pub struct Mesher {
     resolution: [f64; 3],
     layout: Layout,
     relaxation: Relaxation,
+    threads: usize,
+    /// A private pool, so a thread count set here cannot be overridden by
+    /// RAYON_NUM_THREADS and cannot disturb other rayon users in the process.
+    /// `None` means either fully sequential or rayon's global pool.
+    pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     shape: [usize; 3],
     extraction: Option<Extraction>,
 }
@@ -41,6 +47,8 @@ fn run<'py, T: Label + numpy::Element>(
     array: PyReadonlyArray3<'py, T>,
     close: bool,
     relaxation: Relaxation,
+    threads: usize,
+    pool: Option<&rayon::ThreadPool>,
 ) -> ([usize; 3], Extraction) {
     let view = array.as_array();
     let s = view.shape();
@@ -56,14 +64,29 @@ fn run<'py, T: Label + numpy::Element>(
 
     // Neither step touches a Python object, so the GIL is released (pyo3 0.29
     // spells this `detach`) and other threads can run.
-    let extraction = py.detach(move || {
-        let mut extraction = extract_with(&VolumeView::new(view, close), &options);
+    let work = move || {
+        let mut extraction = extract_parallel(&VolumeView::new(view, close), &options, threads);
         if relaxation.iterations > 0 {
-            for mesh in extraction.meshes.iter_mut() {
-                relax(mesh, &relaxation);
+            if threads == 1 {
+                for mesh in extraction.meshes.iter_mut() {
+                    relax(mesh, &relaxation);
+                }
+            } else {
+                // Each object's surface is a separate graph, so relaxation is
+                // embarrassingly parallel and cannot depend on scheduling: a
+                // mesh is only ever touched by the worker that owns it.
+                extraction
+                    .meshes
+                    .par_iter_mut()
+                    .for_each(|mesh| relax(mesh, &relaxation));
             }
         }
         extraction
+    };
+
+    let extraction = py.detach(move || match pool {
+        Some(p) => p.install(work),
+        None => work(),
     });
     (shape, extraction)
 }
@@ -78,6 +101,7 @@ impl Mesher {
         relaxation=0,
         max_deviation=0.5,
         relaxation_step=0.5,
+        threads=0,
     ))]
     fn new(
         voxel_resolution: Vec<f64>,
@@ -86,6 +110,7 @@ impl Mesher {
         relaxation: u32,
         max_deviation: f64,
         relaxation_step: f64,
+        threads: usize,
     ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
             return Err(PyValueError::new_err(format!(
@@ -112,6 +137,18 @@ impl Mesher {
         if !relaxation_step.is_finite() || relaxation_step <= 0.0 || relaxation_step > 1.0 {
             return Err(PyValueError::new_err("relaxation_step must lie in (0, 1]"));
         }
+        // 0 means "use every core", which is rayon's global pool. Any other
+        // value gets a private pool so the choice is honoured exactly.
+        let pool = if threads > 1 {
+            Some(std::sync::Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .map_err(|e| PyValueError::new_err(format!("thread pool: {e}")))?,
+            ))
+        } else {
+            None
+        };
         Ok(Mesher {
             resolution: [
                 voxel_resolution[0],
@@ -119,6 +156,8 @@ impl Mesher {
                 voxel_resolution[2],
             ],
             layout,
+            threads,
+            pool,
             relaxation: Relaxation {
                 iterations: relaxation,
                 max_deviation,
@@ -143,7 +182,14 @@ impl Mesher {
         macro_rules! attempt {
             ($t:ty) => {
                 if let Ok(array) = labels.extract::<PyReadonlyArray3<$t>>() {
-                    let (shape, extraction) = run(py, array, close, self.relaxation);
+                    let (shape, extraction) = run(
+                        py,
+                        array,
+                        close,
+                        self.relaxation,
+                        self.threads,
+                        self.pool.as_deref(),
+                    );
                     self.shape = shape;
                     self.extraction = Some(extraction);
                     return Ok(());
@@ -222,10 +268,21 @@ impl Mesher {
         self.extraction.as_ref().map_or(0, |e| e.labels.len())
     }
 
+    /// Threads actually used: the configured count, or every core when 0.
+    #[getter]
+    fn effective_threads(&self) -> usize {
+        if self.threads == 0 {
+            rayon::current_num_threads()
+        } else {
+            self.threads
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Mesher(voxel_resolution={:?}, objects={})",
+            "Mesher(voxel_resolution={:?}, threads={}, objects={})",
             self.resolution,
+            self.effective_threads(),
             self.__len__()
         )
     }

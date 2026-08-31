@@ -29,6 +29,7 @@
 //! `p` inside each surrounding cell is known from `(du, dv, a)`, and that
 //! corner necessarily carries `p`'s label.
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::grid::{Label, VolumeView};
@@ -115,6 +116,7 @@ impl Extraction {
 type CornerVertices = [u32; 8];
 
 /// One plane of cells.
+#[derive(Clone)]
 struct Slab {
     /// Index into `data` for each cell in the plane, or `NO_VERTEX` when the
     /// cell is uniform and so contributes nothing.
@@ -158,12 +160,45 @@ fn all_equal<T: PartialEq>(c: &[T; 8]) -> bool {
 }
 
 /// Extract every label's surface in a single traversal, with default options.
-pub fn extract<T: Label>(view: &VolumeView<T>) -> Extraction {
+pub fn extract<T: Label + Sync>(view: &VolumeView<T>) -> Extraction {
     extract_with(view, &ExtractOptions::default())
 }
 
-/// Extract every label's surface in a single traversal.
-pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Extraction {
+/// Extract every label's surface, single-threaded.
+pub fn extract_with<T: Label + Sync>(view: &VolumeView<T>, opts: &ExtractOptions) -> Extraction {
+    extract_parallel(view, opts, 1)
+}
+
+/// Smallest number of cell layers worth giving a worker. Below this the merge
+/// and seam work costs more than the traversal it saves.
+const MIN_BAND_DEPTH: usize = 8;
+
+/// Extract every label's surface, optionally across several threads.
+///
+/// # How the work is split
+///
+/// The volume is cut into bands of cell layers along axis 2, one per worker.
+/// A band builds its own vertices and quads with a private label table, so
+/// workers never contend.
+///
+/// Quads are the awkward part: a quad owned by the cell at `cz` reads the cell
+/// layer at `cz - 1`, which for the first layer of a band belongs to the
+/// previous band. Rather than duplicating that layer, each band simply skips
+/// its own first layer's quads, and a short serial pass afterwards emits them
+/// using the two neighbouring bands' exported layers. That pass touches one
+/// cell layer per seam — a few thousandths of the volume.
+///
+/// # Determinism
+///
+/// Bands are merged in band order and each band's labels are sorted before
+/// merging, so a label's vertices always appear in the same sequence no matter
+/// which worker finished first or how many workers there were. Output is
+/// therefore byte-identical across thread counts.
+pub fn extract_parallel<T: Label + Sync>(
+    view: &VolumeView<T>,
+    opts: &ExtractOptions,
+    threads: usize,
+) -> Extraction {
     let nc = view.cell_counts();
     let lo = view.sample_lo();
     if nc[0] == 0 || nc[1] == 0 || nc[2] == 0 {
@@ -172,19 +207,82 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
             meshes: Vec::new(),
         };
     }
-    let plane = nc[0] * nc[1];
 
+    let wanted = if threads == 0 {
+        rayon::current_num_threads()
+    } else {
+        threads
+    };
+    let bands = wanted.clamp(1, nc[2].div_ceil(MIN_BAND_DEPTH).max(1));
+
+    if bands <= 1 {
+        let band = extract_band(view, opts, nc, lo, 0, nc[2], true);
+        return finish_single(band);
+    }
+
+    let ranges = split_range(nc[2], bands);
+    let outputs: Vec<Band> = ranges
+        .par_iter()
+        .map(|&(start, end)| extract_band(view, opts, nc, lo, start, end, start == 0))
+        .collect();
+
+    merge(view, nc, lo, outputs)
+}
+
+/// Divide `total` layers into `parts` contiguous ranges, largest first.
+fn split_range(total: usize, parts: usize) -> Vec<(usize, usize)> {
+    let base = total / parts;
+    let extra = total % parts;
+    let mut out = Vec::with_capacity(parts);
+    let mut at = 0;
+    for i in 0..parts {
+        let depth = base + usize::from(i < extra);
+        if depth == 0 {
+            continue;
+        }
+        out.push((at, at + depth));
+        at += depth;
+    }
+    out
+}
+
+/// One worker's share of the volume.
+struct Band {
+    /// Ascending label ids, parallel to `meshes`.
+    labels: Vec<u64>,
+    meshes: Vec<LabelMesh>,
+    /// Cell layer at `start`, needed by the seam below this band.
+    first: Slab,
+    /// Cell layer at `end - 1`, needed by the seam above this band.
+    last: Slab,
+    start: usize,
+}
+
+fn extract_band<T: Label>(
+    view: &VolumeView<T>,
+    opts: &ExtractOptions,
+    nc: [usize; 3],
+    lo: [isize; 3],
+    start: usize,
+    end: usize,
+    emit_first_layer_quads: bool,
+) -> Band {
+    let plane = nc[0] * nc[1];
     let mut label_index: FxHashMap<u64, u32> = FxHashMap::default();
     let mut meshes: Vec<LabelMesh> = Vec::new();
 
-    // Slabs are planes of cells spanning array axes 0 and 1, stepped along
-    // axis 2. Only the current and previous plane are ever needed.
+    // Only the current and previous cell layer are ever needed.
     let mut prev = Slab::new(plane);
     let mut cur = Slab::new(plane);
+    let mut first = Slab::new(plane);
+    let mut last = Slab::new(plane);
 
-    for cz in 0..nc[2] {
+    for cz in start..end {
         std::mem::swap(&mut prev, &mut cur);
         cur.reset();
+        // The first layer's quads read the layer below, which belongs to the
+        // previous band, so they are left to the seam pass.
+        let emit_quads = emit_first_layer_quads || cz > start;
 
         for cy in 0..nc[1] {
             for cx in 0..nc[0] {
@@ -199,6 +297,8 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
                 }
 
                 // --- vertices ------------------------------------------------
+                // Computed from the global cell grid, so banding cannot change
+                // which cells count as the volume's boundary.
                 let on_boundary = opts.mark_boundary
                     && (cx == 0
                         || cy == 0
@@ -214,7 +314,6 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
                     if label == T::BACKGROUND || corner_vertex[c] != NO_VERTEX {
                         continue;
                     }
-                    // All corners carrying this label, as an 8-bit mask.
                     let mut mask = 0usize;
                     for (k, &other) in corners.iter().enumerate() {
                         if other == label {
@@ -246,36 +345,35 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
                 cur.data.push(corner_vertex);
                 cur.slot[cy * nc[0] + cx] = slot;
 
+                if !emit_quads {
+                    continue;
+                }
+
                 // --- quads ---------------------------------------------------
-                // Only the three edges leaving the cell's own minimum corner are
-                // considered here; every other voxel edge is owned by some other
+                // Only the three edges leaving this cell's own minimum corner
+                // are considered; every other voxel edge belongs to some other
                 // cell, so each is emitted exactly once.
                 for axis in 0..3 {
                     let far = 1usize << axis;
                     let lower = corners[0];
                     let upper = corners[far];
-                    if lower == upper {
-                        continue;
-                    }
-                    if lower == T::BACKGROUND && upper == T::BACKGROUND {
+                    if lower == upper || (lower == T::BACKGROUND && upper == T::BACKGROUND) {
                         continue;
                     }
 
                     let u = (axis + 1) % 3;
                     let v = (axis + 2) % 3;
-                    let cell = [cx, cy, cz];
+                    let cell = [cx as isize, cy as isize, cz as isize];
 
                     let mut ring_lower = [NO_VERTEX; 4];
                     let mut ring_upper = [NO_VERTEX; 4];
                     let mut complete = true;
 
                     for (i, &(du, dv)) in RING.iter().enumerate() {
-                        let mut nb = [cell[0] as isize, cell[1] as isize, cell[2] as isize];
+                        let mut nb = cell;
                         nb[u] -= du as isize;
                         nb[v] -= dv as isize;
                         if nb[u] < 0 || nb[v] < 0 {
-                            // The surrounding cell lies outside the volume, so
-                            // the surface is left open here.
                             complete = false;
                             break;
                         }
@@ -286,8 +384,6 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
                             complete = false;
                             break;
                         };
-                        // The voxel at this cell's own corner 0 sits at offset
-                        // `du` along u and `dv` along v inside the neighbour.
                         let near_corner = (du << u) | (dv << v);
                         ring_lower[i] = entry[near_corner];
                         ring_upper[i] = entry[near_corner | far];
@@ -314,9 +410,23 @@ pub fn extract_with<T: Label>(view: &VolumeView<T>, opts: &ExtractOptions) -> Ex
                 }
             }
         }
+
+        if cz == start {
+            first = cur.clone();
+        }
+        if cz + 1 == end {
+            last = cur.clone();
+        }
     }
 
-    finish(label_index, meshes)
+    let (labels, meshes) = sort_by_label(label_index, meshes);
+    Band {
+        labels,
+        meshes,
+        first,
+        last,
+        start,
+    }
 }
 
 #[inline]
@@ -332,22 +442,227 @@ fn label_slot(index: &mut FxHashMap<u64, u32>, meshes: &mut Vec<LabelMesh>, labe
     }
 }
 
-/// Reorder into ascending label order, so results never depend on hash order.
-fn finish(index: FxHashMap<u64, u32>, meshes: Vec<LabelMesh>) -> Extraction {
+/// Put labels in ascending order, so nothing downstream depends on hash order.
+fn sort_by_label(index: FxHashMap<u64, u32>, meshes: Vec<LabelMesh>) -> (Vec<u64>, Vec<LabelMesh>) {
     let mut pairs: Vec<(u64, u32)> = index.into_iter().collect();
     pairs.sort_unstable_by_key(|&(label, _)| label);
-
     let mut slots: Vec<Option<LabelMesh>> = meshes.into_iter().map(Some).collect();
     let labels = pairs.iter().map(|&(label, _)| label).collect();
     let ordered = pairs
         .iter()
         .map(|&(_, i)| slots[i as usize].take().expect("each label appears once"))
         .collect();
+    (labels, ordered)
+}
+
+fn finish_single(band: Band) -> Extraction {
+    Extraction {
+        labels: band.labels,
+        meshes: band.meshes,
+    }
+}
+
+/// Concatenate the bands and add the quads that straddle their seams.
+///
+/// The subtlety is ordering. A band cannot emit its own first layer's quads, so
+/// those are produced separately — but simply appending them afterwards would
+/// leave each label's faces in a different order than a single-threaded run
+/// produces, and the output would no longer be byte-identical across thread
+/// counts. Instead each seam's quads are bucketed by label and spliced in
+/// between the bands they sit between, which reproduces exact cell order.
+fn merge<T: Label + Sync>(
+    view: &VolumeView<T>,
+    nc: [usize; 3],
+    lo: [isize; 3],
+    mut bands: Vec<Band>,
+) -> Extraction {
+    let mut all: Vec<u64> = bands
+        .iter()
+        .flat_map(|b| b.labels.iter().copied())
+        .collect();
+    all.sort_unstable();
+    all.dedup();
+    let count = all.len();
+    let global: FxHashMap<u64, usize> = all
+        .iter()
+        .enumerate()
+        .map(|(i, &label)| (label, i))
+        .collect();
+
+    let mut meshes: Vec<LabelMesh> = vec![LabelMesh::default(); count];
+
+    // Vertices first: bands in order, so a label's vertices end up in the same
+    // sequence a single traversal would have produced. Record where each band's
+    // block starts so quad indices can be shifted onto it.
+    let mut offsets: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
+    let mut local_of: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
+    for band in bands.iter_mut() {
+        let mut per_label = Vec::with_capacity(band.labels.len());
+        let mut lookup = vec![u32::MAX; count];
+        for (local, &label) in band.labels.iter().enumerate() {
+            let g = global[&label];
+            lookup[g] = local as u32;
+            let target = &mut meshes[g];
+            per_label.push(target.positions.len() as u32);
+            // Move rather than copy, and let the band's copy go as soon as it
+            // has been appended. Only the quads are needed after this, so the
+            // duplicated vertex data never exceeds one label's worth instead of
+            // every band's at once.
+            let positions = std::mem::take(&mut band.meshes[local].positions);
+            target.positions.extend_from_slice(&positions);
+            drop(positions);
+            let pinned = std::mem::take(&mut band.meshes[local].pinned);
+            target.pinned.extend_from_slice(&pinned);
+        }
+        offsets.push(per_label);
+        local_of.push(lookup);
+    }
+
+    // Each seam's quads, bucketed by global label. Seams are independent.
+    let seams: Vec<Vec<Vec<[u32; 4]>>> = (1..bands.len())
+        .into_par_iter()
+        .map(|b| seam_quads(view, nc, lo, &bands, &offsets, &global, count, b))
+        .collect();
+
+    // Now the quads, in cell order: band 0, then seam 1, then band 1, and so on.
+    for (g, mesh) in meshes.iter_mut().enumerate() {
+        let mut total = 0usize;
+        for b in 0..bands.len() {
+            if b > 0 {
+                total += seams[b - 1][g].len();
+            }
+            let local = local_of[b][g];
+            if local != u32::MAX {
+                total += bands[b].meshes[local as usize].quads.len();
+            }
+        }
+        mesh.quads.reserve_exact(total);
+
+        for b in 0..bands.len() {
+            if b > 0 {
+                mesh.quads.extend_from_slice(&seams[b - 1][g]);
+            }
+            let local = local_of[b][g];
+            if local != u32::MAX {
+                let base = offsets[b][local as usize];
+                let source = std::mem::take(&mut bands[b].meshes[local as usize].quads);
+                mesh.quads
+                    .extend(source.into_iter().map(|q| q.map(|v| v + base)));
+            }
+        }
+    }
 
     Extraction {
-        labels,
-        meshes: ordered,
+        labels: all,
+        meshes,
     }
+}
+
+/// Quads on the first cell layer of band `b`, bucketed by global label index.
+///
+/// These are the only quads no band could produce alone, because they read the
+/// cell layer below, which belongs to the band beneath. Both layers were
+/// exported by their owners, so this just looks them up and shifts the
+/// band-local vertex ids onto their merged positions.
+#[allow(clippy::too_many_arguments)]
+fn seam_quads<T: Label>(
+    view: &VolumeView<T>,
+    nc: [usize; 3],
+    lo: [isize; 3],
+    bands: &[Band],
+    offsets: &[Vec<u32>],
+    global: &FxHashMap<u64, usize>,
+    count: usize,
+    b: usize,
+) -> Vec<Vec<[u32; 4]>> {
+    let mut out: Vec<Vec<[u32; 4]>> = vec![Vec::new(); count];
+
+    let base_of = |band: usize, label: u64| -> u32 {
+        let local = bands[band]
+            .labels
+            .binary_search(&label)
+            .expect("a cell's label must exist in the band that meshed it");
+        offsets[band][local]
+    };
+
+    let cz = bands[b].start;
+    let below = &bands[b - 1].last;
+    let above = &bands[b].first;
+
+    for cy in 0..nc[1] {
+        for cx in 0..nc[0] {
+            let origin = [
+                lo[0] + cx as isize,
+                lo[1] + cy as isize,
+                lo[2] + cz as isize,
+            ];
+            let corners = view.cell_corners(origin);
+            if all_equal(&corners) {
+                continue;
+            }
+
+            for axis in 0..3 {
+                let far = 1usize << axis;
+                let lower = corners[0];
+                let upper = corners[far];
+                if lower == upper || (lower == T::BACKGROUND && upper == T::BACKGROUND) {
+                    continue;
+                }
+
+                let u = (axis + 1) % 3;
+                let v = (axis + 2) % 3;
+                let cell = [cx as isize, cy as isize, cz as isize];
+
+                let mut ring_lower = [NO_VERTEX; 4];
+                let mut ring_upper = [NO_VERTEX; 4];
+                let mut complete = true;
+
+                for (i, &(du, dv)) in RING.iter().enumerate() {
+                    let mut nb = cell;
+                    nb[u] -= du as isize;
+                    nb[v] -= dv as isize;
+                    if nb[u] < 0 || nb[v] < 0 {
+                        complete = false;
+                        break;
+                    }
+                    let (nx, ny, nz) = (nb[0] as usize, nb[1] as usize, nb[2] as usize);
+                    let flat = ny * nc[0] + nx;
+                    // Only two layers can be involved: this one, and the one
+                    // below it which is the previous band's last.
+                    let (slab, owner) = if nz == cz { (above, b) } else { (below, b - 1) };
+                    let Some(entry) = slab.get(flat) else {
+                        complete = false;
+                        break;
+                    };
+                    let near_corner = (du << u) | (dv << v);
+                    // Shift only labels that are actually meshed; a background
+                    // corner holds no vertex to shift.
+                    if lower != T::BACKGROUND {
+                        ring_lower[i] = entry[near_corner] + base_of(owner, lower.as_u64());
+                    }
+                    if upper != T::BACKGROUND {
+                        ring_upper[i] = entry[near_corner | far] + base_of(owner, upper.as_u64());
+                    }
+                }
+                if !complete {
+                    continue;
+                }
+
+                if lower != T::BACKGROUND {
+                    out[global[&lower.as_u64()]].push(ring_lower);
+                }
+                if upper != T::BACKGROUND {
+                    out[global[&upper.as_u64()]].push([
+                        ring_upper[3],
+                        ring_upper[2],
+                        ring_upper[1],
+                        ring_upper[0],
+                    ]);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
