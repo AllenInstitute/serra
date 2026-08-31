@@ -37,10 +37,16 @@ def load(path: str) -> np.ndarray:
     return np.load(path)
 
 
-def run_serra(volume: np.ndarray, extract_all: bool) -> dict:
+def run_serra(
+    volume: np.ndarray,
+    extract_all: bool,
+    simplify: int = 0,
+    max_error: float = 40.0,
+    threads: int = 0,
+) -> dict:
     import serra_mesh
 
-    mesher = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION))
+    mesher = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION), threads=threads)
     start = time.perf_counter()
     mesher.mesh(volume)
     march = time.perf_counter() - start
@@ -50,7 +56,10 @@ def run_serra(volume: np.ndarray, extract_all: bool) -> dict:
     if extract_all:
         start = time.perf_counter()
         vertices = faces = nbytes = 0
-        for mesh in mesher.get_all():
+        for label in mesher.ids():
+            mesh = mesher.get(
+                int(label), reduction_factor=simplify, max_error=max_error
+            )
             vertices += len(mesh.vertices)
             faces += len(mesh.faces)
             nbytes += mesh.nbytes
@@ -64,7 +73,13 @@ def run_serra(volume: np.ndarray, extract_all: bool) -> dict:
     return stats
 
 
-def run_zmesh(volume: np.ndarray, extract_all: bool) -> dict:
+def run_zmesh(
+    volume: np.ndarray,
+    extract_all: bool,
+    simplify: int = 0,
+    max_error: float = 40.0,
+    threads: int = 0,
+) -> dict:
     from zmesh import Mesher
 
     mesher = Mesher(RESOLUTION)
@@ -79,7 +94,11 @@ def run_zmesh(volume: np.ndarray, extract_all: bool) -> dict:
         start = time.perf_counter()
         vertices = faces = nbytes = 0
         for label in ids:
-            mesh = mesher.get(label)
+            mesh = (
+                mesher.get(label, reduction_factor=simplify, max_error=max_error)
+                if simplify > 1
+                else mesher.get(label)
+            )
             vertices += len(mesh.vertices)
             faces += len(mesh.faces)
             nbytes += mesh.nbytes
@@ -98,6 +117,25 @@ def main() -> None:
     parser.add_argument("backend", choices=["serra", "zmesh"])
     parser.add_argument("--volume", default=DEFAULT_VOLUME)
     parser.add_argument(
+        "--simplify",
+        type=int,
+        default=0,
+        help="reduction factor to pass to get(); 0 disables simplification",
+    )
+    parser.add_argument(
+        "--max-error",
+        type=float,
+        default=40.0,
+        help=(
+            "error bound in nm. Note the two libraries mean different things by "
+            "it: serra enforces a displacement bound, zmesh thresholds the "
+            "quadric, so serra reduces less at the same number."
+        ),
+    )
+    parser.add_argument(
+        "--threads", type=int, default=0, help="serra only; 0 uses every core"
+    )
+    parser.add_argument(
         "--march-only",
         action="store_true",
         help="skip per-object extraction, timing only the volume traversal",
@@ -106,7 +144,14 @@ def main() -> None:
 
     volume = load(args.volume)
     runner = run_serra if args.backend == "serra" else run_zmesh
-    stats = runner(volume, extract_all=not args.march_only)
+    stats = runner(
+        volume,
+        extract_all=not args.march_only,
+        simplify=args.simplify,
+        max_error=args.max_error,
+        threads=args.threads,
+    )
+    stats["simplify"] = args.simplify
 
     stats["backend"] = args.backend
     stats["shape"] = list(volume.shape)
