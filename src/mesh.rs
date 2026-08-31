@@ -149,6 +149,19 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
         })
         .collect();
 
+    // Repair the configurations the per-sheet split cannot reach.
+    let mut faces = faces;
+    let suspects: Vec<u32> = raw
+        .suspects
+        .iter()
+        .filter_map(|&v| {
+            let slot = remap[v as usize];
+            (slot != u32::MAX).then_some(slot)
+        })
+        .collect();
+    let origin = split_non_manifold_vertices(&mut faces, vertices.len(), &suspects);
+    let vertices: Vec<[f32; 3]> = origin.iter().map(|&v| vertices[v as usize]).collect();
+
     let normals = if opts.normals {
         Some(vertex_normals(&vertices, &faces))
     } else {
@@ -158,7 +171,10 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
     let pinned = if raw.pinned.is_empty() {
         Vec::new()
     } else {
-        kept.iter().map(|&v| raw.pinned[v as usize]).collect()
+        origin
+            .iter()
+            .map(|&v| raw.pinned[kept[v as usize] as usize])
+            .collect()
     };
 
     TriangleMesh {
@@ -167,6 +183,137 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
         normals,
         pinned,
     }
+}
+
+/// Split the vertices whose surrounding faces do not form a single fan.
+///
+/// Splitting a cell's vertex per sheet of surface handles most cases, but not
+/// all: on a cube face where a label sits at two diagonally opposite corners,
+/// the four crossings can only be paired two ways, and separating the label
+/// necessarily joins the background. Whichever way that is resolved, some
+/// configurations are left with a vertex shared by two sheets, or an edge used
+/// by four triangles instead of two.
+///
+/// This is the general repair. Two faces count as connected only when they
+/// share an edge used by exactly two faces; a vertex is then duplicated once
+/// per connected group of its incident faces. A pinch point separates into two
+/// vertices, and an over-used edge becomes two edges used twice, because its
+/// four faces fall into two groups through their *other* edges.
+///
+/// Only `suspects` are examined — vertices from cells with an ambiguous face,
+/// which are the only ones that can be affected. Everything needed is local:
+/// an edge at a vertex is used only by faces incident to that vertex, so its
+/// count can be taken from the fan without building any global index.
+///
+/// Every copy keeps the original position, so this changes connectivity only.
+/// Chunk seams still agree afterwards.
+fn split_non_manifold_vertices(
+    faces: &mut [[u32; 3]],
+    vertex_count: usize,
+    suspects: &[u32],
+) -> Vec<u32> {
+    use rustc_hash::FxHashMap;
+
+    if suspects.is_empty() {
+        return (0..vertex_count as u32).collect();
+    }
+    let mut is_suspect = vec![false; vertex_count];
+    for &v in suspects {
+        if (v as usize) < vertex_count {
+            is_suspect[v as usize] = true;
+        }
+    }
+
+    // Incident faces, for suspect vertices only.
+    let mut fan_of: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+    for (i, f) in faces.iter().enumerate() {
+        for &v in f {
+            if is_suspect[v as usize] {
+                fan_of.entry(v).or_default().push(i as u32);
+            }
+        }
+    }
+
+    let mut origin: Vec<u32> = (0..vertex_count as u32).collect();
+    let mut ordered: Vec<u32> = fan_of.keys().copied().collect();
+    ordered.sort_unstable(); // keep the numbering deterministic
+
+    let mut uses: FxHashMap<u32, (u32, u32)> = FxHashMap::default();
+    for v in ordered {
+        let fan = &fan_of[&v];
+        if fan.len() < 2 {
+            continue;
+        }
+
+        // How many of this fan's faces use each edge at `v`, and which they are.
+        // An edge at `v` can only belong to faces incident to `v`, so this is a
+        // complete count despite being local.
+        uses.clear();
+        for (slot, &f) in fan.iter().enumerate() {
+            for &w in faces[f as usize].iter() {
+                if w == v {
+                    continue;
+                }
+                let entry = uses.entry(w).or_insert((0, u32::MAX));
+                entry.0 += 1;
+                if entry.1 == u32::MAX {
+                    entry.1 = slot as u32;
+                }
+            }
+        }
+
+        let mut parent: Vec<u32> = (0..fan.len() as u32).collect();
+        fn find(parent: &mut [u32], mut x: u32) -> u32 {
+            while parent[x as usize] != x {
+                parent[x as usize] = parent[parent[x as usize] as usize];
+                x = parent[x as usize];
+            }
+            x
+        }
+        for (slot, &f) in fan.iter().enumerate() {
+            for &w in faces[f as usize].iter() {
+                if w == v {
+                    continue;
+                }
+                let (count, first) = uses[&w];
+                // Only an edge shared by exactly two faces joins a fan.
+                if count != 2 || first == slot as u32 {
+                    continue;
+                }
+                let (a, b) = (find(&mut parent, slot as u32), find(&mut parent, first));
+                if a != b {
+                    parent[a as usize] = b;
+                }
+            }
+        }
+
+        let mut copy_of: FxHashMap<u32, u32> = FxHashMap::default();
+        for (slot, &f) in fan.iter().enumerate() {
+            let root = find(&mut parent, slot as u32);
+            let id = match copy_of.get(&root) {
+                Some(&id) => id,
+                None => {
+                    // The first group keeps the original id; the rest are fresh
+                    // copies at the same position.
+                    let id = if copy_of.is_empty() {
+                        v
+                    } else {
+                        origin.push(v);
+                        (origin.len() - 1) as u32
+                    };
+                    copy_of.insert(root, id);
+                    id
+                }
+            };
+            for slot_in_face in faces[f as usize].iter_mut() {
+                if *slot_in_face == v {
+                    *slot_in_face = id;
+                }
+            }
+        }
+    }
+
+    origin
 }
 
 /// Area-weighted vertex normals.

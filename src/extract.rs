@@ -34,7 +34,7 @@ use rustc_hash::FxHashMap;
 
 use crate::grid::{Label, VolumeView};
 use crate::place::{cell_vertex, crossing_mask};
-use crate::tables::TABLES;
+use crate::tables::{AMBIGUOUS, EDGES, EDGE_INDEX, NEDGES, NO_COMPONENT, SURFACE};
 
 /// Sentinel for "this corner contributes no vertex" (a background corner).
 const NO_VERTEX: u32 = u32::MAX;
@@ -53,6 +53,10 @@ pub struct LabelMesh {
     pub positions: Vec<[i32; 3]>,
     /// Quads as indices into `positions`, wound so normals point outward.
     pub quads: Vec<[u32; 4]>,
+    /// Vertices that came from a cell with an ambiguous face, and so are the
+    /// only ones that can need the manifold repair in [`crate::mesh`]. A short
+    /// list rather than a flag per vertex, because they are rare.
+    pub suspects: Vec<u32>,
     /// Parallel to `positions`: vertices that relaxation must not move.
     ///
     /// Empty unless [`ExtractOptions::mark_boundary`] was set. See that field
@@ -150,9 +154,14 @@ impl Extraction {
     }
 }
 
-/// Per-cell record for one slab: for each of the 8 corners, the vertex it
-/// belongs to within its own label's vertex list.
-type CornerVertices = [u32; 8];
+/// Per-cell record for one slab: for each of the 12 cube edges, the two
+/// vertices it touches — one for the label at its lower corner, one for the
+/// label at its upper corner. Slot `2 * e` is the lower, `2 * e + 1` the upper.
+///
+/// Indexing by edge rather than by corner is what lets a cell carry more
+/// vertices than the label has components, which is needed where a label is
+/// connected inside the cell but its surface still arrives as two sheets.
+type EdgeVertices = [u32; 2 * NEDGES];
 
 /// One plane of cells.
 #[derive(Clone)]
@@ -160,7 +169,7 @@ struct Slab {
     /// Index into `data` for each cell in the plane, or `NO_VERTEX` when the
     /// cell is uniform and so contributes nothing.
     slot: Vec<u32>,
-    data: Vec<CornerVertices>,
+    data: Vec<EdgeVertices>,
 }
 
 impl Slab {
@@ -177,7 +186,7 @@ impl Slab {
     }
 
     #[inline]
-    fn get(&self, index: usize) -> Option<&CornerVertices> {
+    fn get(&self, index: usize) -> Option<&EdgeVertices> {
         let s = self.slot[index];
         if s == NO_VERTEX {
             None
@@ -346,42 +355,54 @@ fn extract_band<T: Label>(
                         || cy + 1 == nc[1]
                         || cz + 1 == nc[2]);
                 let position = cell_vertex(origin, crossing_mask(&corners));
-                let mut corner_vertex: CornerVertices = [NO_VERTEX; 8];
+                let mut edge_vertex: EdgeVertices = [NO_VERTEX; 2 * NEDGES];
+                let mut handled = [false; 8];
 
                 for c in 0..8 {
-                    let label = corners[c];
-                    if label == T::BACKGROUND || corner_vertex[c] != NO_VERTEX {
+                    if handled[c] {
                         continue;
                     }
+                    let label = corners[c];
                     let mut mask = 0usize;
                     for (k, &other) in corners.iter().enumerate() {
                         if other == label {
                             mask |= 1 << k;
+                            handled[k] = true;
                         }
+                    }
+                    if label == T::BACKGROUND {
+                        continue;
                     }
 
                     let li = label_slot(&mut label_index, &mut meshes, label.as_u64());
                     let mesh = &mut meshes[li];
                     let base = mesh.positions.len() as u32;
-                    // One vertex per connected component keeps this label's
-                    // surface 2-manifold even where it touches itself only
-                    // diagonally. All components share the cell's position.
-                    for _ in 0..TABLES.ncomp[mask] {
+                    // One vertex per sheet of surface keeps this label
+                    // 2-manifold, including where the label is connected inside
+                    // the cell but its surface is not. All sheets share the
+                    // cell's position.
+                    for n in 0..SURFACE.sheets[mask] {
                         mesh.positions.push(position);
                         if opts.mark_boundary {
                             mesh.pinned.push(on_boundary);
                         }
-                    }
-                    let split = &TABLES.split[mask];
-                    for k in 0..8 {
-                        if mask & (1 << k) != 0 {
-                            corner_vertex[k] = base + split[k] as u32;
+                        if AMBIGUOUS[mask] {
+                            mesh.suspects.push(base + n as u32);
                         }
+                    }
+                    for (e, &sheet) in SURFACE.component[mask].iter().enumerate() {
+                        if sheet == NO_COMPONENT {
+                            continue;
+                        }
+                        // A crossing edge has exactly one end carrying this
+                        // label, and that end picks which slot to fill.
+                        let lower_carries = mask & (1 << EDGES[e].0) != 0;
+                        edge_vertex[2 * e + usize::from(!lower_carries)] = base + sheet as u32;
                     }
                 }
 
                 let slot = cur.data.len() as u32;
-                cur.data.push(corner_vertex);
+                cur.data.push(edge_vertex);
                 cur.slot[cy * nc[0] + cx] = slot;
 
                 if !emit_quads {
@@ -392,6 +413,7 @@ fn extract_band<T: Label>(
                 // Only the three edges leaving this cell's own minimum corner
                 // are considered; every other voxel edge belongs to some other
                 // cell, so each is emitted exactly once.
+                #[allow(clippy::needless_range_loop)] // `axis` is a direction
                 for axis in 0..3 {
                     let far = 1usize << axis;
                     let lower = corners[0];
@@ -426,9 +448,12 @@ fn extract_band<T: Label>(
                             complete = false;
                             break;
                         };
+                        // The voxel edge this quad is dual to is a cube edge of the
+                        // neighbour, running from `near_corner` along `axis`.
                         let near_corner = (du << u) | (dv << v);
-                        ring_lower[i] = entry[near_corner];
-                        ring_upper[i] = entry[near_corner | far];
+                        let edge = EDGE_INDEX[near_corner][axis] as usize;
+                        ring_lower[i] = entry[2 * edge];
+                        ring_upper[i] = entry[2 * edge + 1];
                     }
                     if !complete {
                         continue;
@@ -546,7 +571,8 @@ fn merge<T: Label + Sync>(
             let g = global[&label];
             lookup[g] = local as u32;
             let target = &mut meshes[g];
-            per_label.push(target.positions.len() as u32);
+            let base = target.positions.len() as u32;
+            per_label.push(base);
             // Move rather than copy, and let the band's copy go as soon as it
             // has been appended. Only the quads are needed after this, so the
             // duplicated vertex data never exceeds one label's worth instead of
@@ -556,6 +582,10 @@ fn merge<T: Label + Sync>(
             drop(positions);
             let pinned = std::mem::take(&mut band.meshes[local].pinned);
             target.pinned.extend_from_slice(&pinned);
+            let suspects = std::mem::take(&mut band.meshes[local].suspects);
+            target
+                .suspects
+                .extend(suspects.into_iter().map(|v| v + base));
         }
         offsets.push(per_label);
         local_of.push(lookup);
@@ -645,6 +675,7 @@ fn seam_quads<T: Label>(
                 continue;
             }
 
+            #[allow(clippy::needless_range_loop)] // `axis` is a direction
             for axis in 0..3 {
                 let far = 1usize << axis;
                 let lower = corners[0];
@@ -681,14 +712,17 @@ fn seam_quads<T: Label>(
                         complete = false;
                         break;
                     };
+                    // The voxel edge this quad is dual to is a cube edge of the
+                    // neighbour, running from `near_corner` along `axis`.
                     let near_corner = (du << u) | (dv << v);
+                    let edge = EDGE_INDEX[near_corner][axis] as usize;
                     // Shift only labels that are actually meshed; a background
                     // corner holds no vertex to shift.
                     if lower != T::BACKGROUND {
-                        ring_lower[i] = entry[near_corner] + base_of(owner, lower.as_u64());
+                        ring_lower[i] = entry[2 * edge] + base_of(owner, lower.as_u64());
                     }
                     if upper != T::BACKGROUND {
-                        ring_upper[i] = entry[near_corner | far] + base_of(owner, upper.as_u64());
+                        ring_upper[i] = entry[2 * edge + 1] + base_of(owner, upper.as_u64());
                     }
                 }
                 if !complete {

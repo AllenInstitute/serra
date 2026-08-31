@@ -180,6 +180,393 @@ const fn build_tables() -> CubeTables {
     CubeTables { split, ncomp }
 }
 
+/// Index of the edge joining `corner` and `corner ^ (1 << axis)`.
+pub const EDGE_INDEX: [[u8; 3]; NCORNERS] = build_edge_index();
+
+const fn build_edge_index() -> [[u8; 3]; NCORNERS] {
+    let mut out = [[0u8; 3]; NCORNERS];
+    let mut c = 0;
+    while c < NCORNERS {
+        let mut axis = 0;
+        while axis < 3 {
+            let other = c ^ (1 << axis);
+            let (lo, hi) = if c < other { (c, other) } else { (other, c) };
+            let mut e = 0;
+            while e < NEDGES {
+                if EDGES[e].0 as usize == lo && EDGES[e].1 as usize == hi {
+                    out[c][axis] = e as u8;
+                }
+                e += 1;
+            }
+            axis += 1;
+        }
+        c += 1;
+    }
+    out
+}
+
+/// The six faces of the cube, as the four edges lying in each.
+const FACE_EDGES: [[u8; 4]; 6] = build_face_edges();
+
+const fn build_face_edges() -> [[u8; 4]; 6] {
+    let mut out = [[0u8; 4]; 6];
+    let mut face = 0;
+    while face < 6 {
+        let axis = face / 2;
+        let value = face % 2;
+        let mut n = 0;
+        let mut e = 0;
+        while e < NEDGES {
+            let a = EDGES[e].0 as usize;
+            let b = EDGES[e].1 as usize;
+            // An edge lies in the face when both ends sit on it.
+            if (a >> axis) & 1 == value && (b >> axis) & 1 == value {
+                out[face][n] = e as u8;
+                n += 1;
+            }
+            e += 1;
+        }
+        face += 1;
+    }
+    out
+}
+
+/// How a label's surface passes through a cell.
+///
+/// A cell contributes one vertex per connected component of the label's
+/// *crossing edges* — the cube edges with exactly one end carrying the label.
+/// That is the number of separate sheets of surface passing through the cell.
+///
+/// Splitting by connected components of the label's *corners* instead is not
+/// enough, and gets it wrong in a case that occurs regularly in real data: six
+/// label corners whose two background corners are body-diagonal (mask
+/// `0b11100111`). The label is 6-connected, so a corner-based split yields one
+/// vertex, but there is a sheet of surface around each background corner and
+/// they would share it — a pinch point.
+pub struct SurfaceTables {
+    /// `component[mask][edge]` is which sheet that crossing edge belongs to,
+    /// or [`NO_COMPONENT`] when the edge does not cross.
+    pub component: [[u8; NEDGES]; 256],
+    /// How many sheets, and so how many vertices, `mask` needs.
+    pub sheets: [u8; 256],
+}
+
+/// Surface-sheet decomposition for every possible label mask.
+pub static SURFACE: SurfaceTables = build_surface();
+
+/// Whether a mask has a face where the label sits at two diagonally opposite
+/// corners.
+///
+/// Such a face is the only place the surface can pinch: its four crossings can
+/// be paired two ways, and whichever is chosen, some configurations are left
+/// with a shared vertex or an over-used edge. Only vertices from these cells
+/// need the repair pass, which keeps it off the hot path for the ~99% of cells
+/// that cannot be affected.
+pub static AMBIGUOUS: [bool; 256] = build_ambiguous();
+
+const fn build_ambiguous() -> [bool; 256] {
+    let mut out = [false; 256];
+    let mut mask = 0usize;
+    while mask < 256 {
+        let mut face = 0;
+        while face < 6 {
+            let mut crossings = 0;
+            let mut k = 0;
+            while k < 4 {
+                let e = FACE_EDGES[face][k] as usize;
+                if ((mask >> EDGES[e].0) & 1) != ((mask >> EDGES[e].1) & 1) {
+                    crossings += 1;
+                }
+                k += 1;
+            }
+            // Four crossings on one face means two diagonal label corners.
+            if crossings == 4 {
+                out[mask] = true;
+            }
+            face += 1;
+        }
+        mask += 1;
+    }
+    out
+}
+
+const fn build_surface() -> SurfaceTables {
+    let mut component = [[NO_COMPONENT; NEDGES]; 256];
+    let mut sheets = [0u8; 256];
+
+    let mut mask = 0usize;
+    while mask < 256 {
+        // A cube edge crosses the surface when exactly one end carries the label.
+        let mut rep = [NO_COMPONENT; NEDGES];
+        let mut e = 0;
+        while e < NEDGES {
+            let a = (mask >> EDGES[e].0) & 1;
+            let b = (mask >> EDGES[e].1) & 1;
+            if a != b {
+                rep[e] = e as u8;
+            }
+            e += 1;
+        }
+
+        // Join crossing edges that meet within a face. Repeated relaxation
+        // rather than union-find, which const fn cannot express as tidily; the
+        // graph has at most 12 nodes so this converges immediately.
+        let mut round = 0;
+        while round < NEDGES {
+            let mut face = 0;
+            while face < 6 {
+                // Count this face's crossings.
+                let mut present = [NO_COMPONENT; 4];
+                let mut n = 0;
+                let mut k = 0;
+                while k < 4 {
+                    let e = FACE_EDGES[face][k] as usize;
+                    if rep[e] != NO_COMPONENT {
+                        present[n] = e as u8;
+                        n += 1;
+                    }
+                    k += 1;
+                }
+
+                if n == 2 {
+                    // Unambiguous: the surface crosses the face once.
+                    let (x, y) = (present[0] as usize, present[1] as usize);
+                    let m = if rep[x] < rep[y] { rep[x] } else { rep[y] };
+                    rep[x] = m;
+                    rep[y] = m;
+                } else if n == 4 {
+                    // Ambiguous: the label occupies two diagonally opposite
+                    // corners. Keeping them apart is the 6-connected reading,
+                    // matching how the label's own corners are treated. Both
+                    // cells sharing this face see the same corners, so they
+                    // resolve it the same way.
+                    let mut c = 0;
+                    while c < NCORNERS {
+                        if (mask >> c) & 1 == 1 && (c >> (face / 2)) & 1 == face % 2 {
+                            // Join the crossing edges meeting at this corner.
+                            let mut first = NO_COMPONENT;
+                            let mut k = 0;
+                            while k < 4 {
+                                let e = FACE_EDGES[face][k] as usize;
+                                if rep[e] != NO_COMPONENT
+                                    && (EDGES[e].0 as usize == c || EDGES[e].1 as usize == c)
+                                {
+                                    if first == NO_COMPONENT {
+                                        first = e as u8;
+                                    } else {
+                                        let x = first as usize;
+                                        let m = if rep[x] < rep[e] { rep[x] } else { rep[e] };
+                                        rep[x] = m;
+                                        rep[e] = m;
+                                    }
+                                }
+                                k += 1;
+                            }
+                        }
+                        c += 1;
+                    }
+                }
+                face += 1;
+            }
+            round += 1;
+        }
+
+        // Renumber densely in increasing edge order, so ids depend only on the
+        // mask.
+        let mut dense = [NO_COMPONENT; NEDGES];
+        let mut next = 0u8;
+        let mut e = 0;
+        while e < NEDGES {
+            if rep[e] != NO_COMPONENT {
+                let r = rep[e] as usize;
+                if dense[r] == NO_COMPONENT {
+                    dense[r] = next;
+                    next += 1;
+                }
+                component[mask][e] = dense[r];
+            }
+            e += 1;
+        }
+        sheets[mask] = next;
+        mask += 1;
+    }
+
+    SurfaceTables { component, sheets }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    // Faces and edges are indexed by their geometric number throughout, which
+    // is the natural formulation here.
+    #![allow(clippy::needless_range_loop)]
+
+    use super::*;
+
+    /// Reference: flood fill over crossing edges, joined within each face.
+    fn reference(mask: usize) -> (Vec<Option<u8>>, u8) {
+        let crossing: Vec<bool> = (0..NEDGES)
+            .map(|e| ((mask >> EDGES[e].0) & 1) != ((mask >> EDGES[e].1) & 1))
+            .collect();
+
+        let mut links: Vec<Vec<usize>> = vec![Vec::new(); NEDGES];
+        for face in 0..6 {
+            let on_face: Vec<usize> = FACE_EDGES[face]
+                .iter()
+                .map(|&e| e as usize)
+                .filter(|&e| crossing[e])
+                .collect();
+            if on_face.len() == 2 {
+                links[on_face[0]].push(on_face[1]);
+                links[on_face[1]].push(on_face[0]);
+            } else if on_face.len() == 4 {
+                for c in 0..NCORNERS {
+                    if (mask >> c) & 1 == 1 && (c >> (face / 2)) & 1 == face % 2 {
+                        let at_corner: Vec<usize> = on_face
+                            .iter()
+                            .copied()
+                            .filter(|&e| EDGES[e].0 as usize == c || EDGES[e].1 as usize == c)
+                            .collect();
+                        for i in 0..at_corner.len() {
+                            for j in (i + 1)..at_corner.len() {
+                                links[at_corner[i]].push(at_corner[j]);
+                                links[at_corner[j]].push(at_corner[i]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut comp: Vec<Option<u8>> = vec![None; NEDGES];
+        let mut next = 0u8;
+        for start in 0..NEDGES {
+            if !crossing[start] || comp[start].is_some() {
+                continue;
+            }
+            let mut stack = vec![start];
+            comp[start] = Some(next);
+            while let Some(e) = stack.pop() {
+                for &w in &links[e] {
+                    if comp[w].is_none() {
+                        comp[w] = Some(next);
+                        stack.push(w);
+                    }
+                }
+            }
+            next += 1;
+        }
+        (comp, next)
+    }
+
+    #[test]
+    fn surface_split_matches_reference_for_all_256_masks() {
+        for mask in 0..256usize {
+            let (want, want_n) = reference(mask);
+            assert_eq!(SURFACE.sheets[mask], want_n, "sheet count for {mask:08b}");
+            for e in 0..NEDGES {
+                let got = SURFACE.component[mask][e];
+                match want[e] {
+                    None => assert_eq!(got, NO_COMPONENT, "mask {mask:08b} edge {e}"),
+                    Some(w) => assert_eq!(got, w, "mask {mask:08b} edge {e}"),
+                }
+            }
+        }
+    }
+
+    /// The configuration that motivated this table.
+    #[test]
+    fn six_corners_with_a_diagonal_pair_missing_needs_two_sheets() {
+        let mask = 0b1110_0111usize;
+        assert_eq!(TABLES.ncomp[mask], 1, "the label's corners are 6-connected");
+        assert_eq!(
+            SURFACE.sheets[mask], 2,
+            "but there is a sheet around each background corner"
+        );
+    }
+
+    #[test]
+    fn a_flat_wall_is_a_single_sheet() {
+        // Corners with bit 0 clear are the label: one planar crossing.
+        let mask = (0..NCORNERS)
+            .filter(|c| c & 1 == 0)
+            .fold(0, |m, c| m | 1 << c);
+        assert_eq!(SURFACE.sheets[mask], 1);
+        assert_eq!(
+            SURFACE.component[mask]
+                .iter()
+                .filter(|&&c| c != NO_COMPONENT)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn an_isolated_corner_is_a_single_sheet_of_three_edges() {
+        for c in 0..NCORNERS {
+            let mask = 1usize << c;
+            assert_eq!(SURFACE.sheets[mask], 1, "corner {c}");
+            assert_eq!(
+                SURFACE.component[mask]
+                    .iter()
+                    .filter(|&&x| x != NO_COMPONENT)
+                    .count(),
+                3
+            );
+        }
+    }
+
+    #[test]
+    fn the_checkerboard_still_gives_four_sheets() {
+        let even = (0..NCORNERS)
+            .filter(|c| (*c as u32).count_ones() % 2 == 0)
+            .fold(0usize, |m, c| m | 1 << c);
+        assert_eq!(SURFACE.sheets[even], 4);
+    }
+
+    #[test]
+    fn empty_and_full_masks_have_no_surface() {
+        assert_eq!(SURFACE.sheets[0], 0);
+        assert_eq!(SURFACE.sheets[0xFF], 0);
+    }
+
+    #[test]
+    fn every_crossing_edge_is_assigned_and_ids_are_dense() {
+        for mask in 0..256usize {
+            let n = SURFACE.sheets[mask];
+            let mut seen = vec![false; n as usize];
+            for e in 0..NEDGES {
+                let crossing = ((mask >> EDGES[e].0) & 1) != ((mask >> EDGES[e].1) & 1);
+                let got = SURFACE.component[mask][e];
+                assert_eq!(crossing, got != NO_COMPONENT, "mask {mask:08b} edge {e}");
+                if got != NO_COMPONENT {
+                    assert!(got < n);
+                    seen[got as usize] = true;
+                }
+            }
+            assert!(seen.iter().all(|&s| s), "mask {mask:08b} has a gap in ids");
+        }
+    }
+
+    #[test]
+    fn sheets_never_exceed_four() {
+        for mask in 0..256usize {
+            assert!(SURFACE.sheets[mask] <= 4, "mask {mask:08b}");
+        }
+    }
+
+    #[test]
+    fn edge_index_is_consistent_with_the_edge_list() {
+        for c in 0..NCORNERS {
+            for axis in 0..3 {
+                let e = EDGE_INDEX[c][axis] as usize;
+                let other = c ^ (1 << axis);
+                let (lo, hi) = if c < other { (c, other) } else { (other, c) };
+                assert_eq!((EDGES[e].0 as usize, EDGES[e].1 as usize), (lo, hi));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

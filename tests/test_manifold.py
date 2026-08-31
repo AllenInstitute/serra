@@ -219,21 +219,12 @@ class TestBandedExtraction:
             assert_valid_closed_surface(mesh, expected_euler=2)
 
 
-class TestKnownSplitLimitation:
-    """A cell can carry more surface sheets than the label has components.
+class TestHardManifoldCases:
+    """Configurations that a naive dual contourer gets wrong.
 
-    serra splits a cell's vertex once per 6-connected component of the label's
-    corners. That is not always enough: if the label is connected but the
-    *background* inside the cell is not, the surface passes through the cell as
-    two separate sheets, and they end up sharing the single vertex.
-
-    The smallest case is a cell with six label corners whose two background
-    corners are body-diagonal (mask 0b11100111). The label is 6-connected, so
-    one vertex is emitted, but there is a sheet around each background corner.
-
-    Found on real connectomics data, where it affects 10 of 133 objects in a
-    160^3 cutout. The fix is to split per connected component of the crossing
-    edges rather than of the label's corners.
+    Both were found on real connectomics data, where together they left 10 of
+    133 objects non-manifold in a 160^3 cutout. Neither shows up in simple
+    synthetic shapes, which is why they survived the original test suite.
     """
 
     @staticmethod
@@ -264,15 +255,59 @@ class TestKnownSplitLimitation:
         # 6-connected and form two separate background components.
         assert bin(background[0] ^ background[1]).count("1") == 3
 
-    @pytest.mark.xfail(
-        reason="splitting is per label component, not per surface sheet",
-        strict=True,
-    )
     def test_no_pinch_point(self):
+        """Six label corners, two body-diagonal background corners.
+
+        The label is 6-connected, so splitting per label component yields one
+        vertex — but there is a sheet of surface around each background corner,
+        and they would share it. Splitting per connected component of the
+        *crossing edges* separates them.
+        """
         mesh = serra_mesh.Mesher().mesh(self.pinch_volume(), close=True).get(1)
         assert non_manifold_vertex_count(mesh) == 0
 
-    def test_edges_are_still_fine(self):
-        """Only the vertex is pinched; no edge is over-used."""
+    def test_edges_are_fine_too(self):
         mesh = serra_mesh.Mesher().mesh(self.pinch_volume(), close=True).get(1)
         assert non_manifold_edge_count(mesh) == 0
+
+    @staticmethod
+    def four_used_edge_volume():
+        """Two cells joined by an edge that four triangles want to share.
+
+        On a cube face where the label sits at two diagonally opposite corners,
+        the four crossings can only be paired two ways: separating the label
+        necessarily joins the background. Here that merges two background
+        components, and the surface then passes between the two cells four
+        times over a single edge. No choice of pairing avoids it, so it is
+        repaired afterwards by splitting the vertices whose face fan is
+        disconnected.
+        """
+        a = np.zeros((4, 4, 4), np.uint32)
+        for v in [
+            (1, 1, 1),
+            (1, 2, 1),
+            (1, 3, 1),
+            (2, 1, 1),
+            (2, 1, 2),
+            (2, 2, 2),
+            (2, 3, 1),
+            (2, 3, 2),
+        ]:
+            a[v] = 1
+        return a
+
+    def test_no_over_used_edge(self):
+        mesh = serra_mesh.Mesher().mesh(self.four_used_edge_volume(), close=True).get(1)
+        assert non_manifold_edge_count(mesh) == 0
+        assert non_manifold_vertex_count(mesh) == 0
+
+    def test_repair_does_not_move_anything(self):
+        """Splitting changes connectivity only; every copy keeps its position.
+
+        That is what lets chunk seams still match after the repair.
+        """
+        mesh = serra_mesh.Mesher().mesh(self.four_used_edge_volume(), close=True).get(1)
+        # Duplicated vertices sit exactly on top of their originals.
+        unique = np.unique(mesh.vertices, axis=0)
+        assert len(unique) <= len(mesh.vertices)
+        assert mesh.volume() > 0
