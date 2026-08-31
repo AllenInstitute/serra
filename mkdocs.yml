@@ -22,6 +22,7 @@ nav:
   - Guide:
       - Chunked meshing: chunked.md
       - Accuracy and smoothing: accuracy.md
+      - PyChunkedGraph: pychunkedgraph.md
   - Developer guide: developer.md
   - API reference: reference.md
 
