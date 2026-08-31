@@ -1,0 +1,61 @@
+cff-version: 1.2.0
+title: serra
+message: >-
+  If you use this software, please cite both the software itself and the
+  method it implements (Frisken 2022, listed under references).
+type: software
+authors:
+  - name: Allen Institute for Brain Science
+repository-code: https://github.com/AllenInstitute/serra
+abstract: >-
+  Analytical multi-material meshes from voxelized segmentations. A single pass
+  over the volume produces a 2-manifold, watertight mesh per label regardless
+  of how many labels are present, with vertex positions in fixed point so that
+  meshes of adjacent chunks share seam vertices exactly and stitch by
+  deduplication alone.
+keywords:
+  - meshing
+  - surface nets
+  - dual contouring
+  - segmentation
+  - connectomics
+license: MIT
+references:
+  - type: article
+    title: >-
+      SurfaceNets for Multi-Label Segmentations with Preservation of Sharp
+      Boundaries
+    authors:
+      - family-names: Frisken
+        given-names: Sarah F.
+    journal: Journal of Computer Graphics Techniques
+    volume: 11
+    issue: 1
+    start: 34
+    end: 54
+    year: 2022
+    notes: The method serra implements.
+  - type: conference-paper
+    title: >-
+      Constrained Elastic Surface Nets: Generating Smooth Surfaces from Binary
+      Segmented Data
+    authors:
+      - family-names: Gibson
+        given-names: Sarah F. F.
+    collection-title: >-
+      Medical Image Computing and Computer-Assisted Intervention (MICCAI 1998)
+    start: 888
+    end: 898
+    year: 1998
+  - type: article
+    title: Surface Simplification Using Quadric Error Metrics
+    authors:
+      - family-names: Garland
+        given-names: Michael
+      - family-names: Heckbert
+        given-names: Paul S.
+    collection-title: SIGGRAPH '97
+    start: 209
+    end: 216
+    year: 1997
+    notes: The simplifier behind reduction_factor / max_error.

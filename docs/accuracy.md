@@ -122,3 +122,67 @@ python bench/download_microns.py            # re-fetch the cutout
 python bench/download_microns.py --survey   # re-run the region search
 python bench/validate_winding.py
 ```
+
+## Taubin smoothing on top
+
+serra's `relaxation` is Frisken's constrained Laplacian fairing: bounded
+displacement, seam vertices pinned. Taubin smoothing — the windowed-sinc
+low-pass usually reached for to fix marching-cubes staircasing — is
+unconstrained, and the question is whether it adds anything once relaxation has
+run. Measured with `bench/taubin.py` (20 iterations, pass band 0.1, Blackman
+window).
+
+**It helps, and it helps least where serra already is.** On an analytic sphere
+of radius 32, mean angle between each face normal and the true surface normal:
+
+| | area error | volume error | normal error |
+| --- | --- | --- | --- |
+| zmesh | +8.62% | −0.19% | 20.8° |
+| zmesh + Taubin | +0.53% | −0.21% | 6.04° |
+| serra k=0 | +2.80% | −0.23% | 12.5° |
+| serra k=0 + Taubin | +0.30% | −0.25% | 4.57° |
+| serra k=3 | +0.28% | −0.39% | 5.16° |
+| serra k=3 + Taubin | −0.05% | −0.40% | **3.00°** |
+
+Taubin is a genuine improvement on top of `relaxation=3`, and it is cheap —
+about 70 ms for 24 objects. Volume is preserved throughout, which is the point
+of the pass band; on real neuropil the cost is 0.1–1.7% of volume, largest on
+the smallest objects, since smoothing removes a roughly fixed depth from every
+surface.
+
+!!! warning "It cannot be applied per chunk"
+
+    serra welds seams by **exact** float equality, so the only tolerable seam
+    displacement is zero. No window or boundary setting achieves that:
+
+    | window | boundary smoothing | max seam displacement | stitches? |
+    | --- | --- | --- | --- |
+    | Blackman | on | 1.7 × 10⁻¹ voxel | no |
+    | Blackman | off | 1.7 × 10⁻³ voxel | no |
+    | Hamming | off | 3.9 × 10⁻² voxel | no |
+    | Nuttall | off | 4.9 × 10⁻⁵ voxel | no |
+
+    Blackman does preserve borders far better than the default, which matches
+    the reported experience — but "far better" is not "exactly", and 2,628 of
+    2,628 seam vertices still move.
+
+    The fix is to snap every seam vertex back to the extractor's position after
+    smoothing. Stitching then succeeds with zero open edges, and the assembled
+    surface lands a median 0.003 voxels (worst 0.214) from where smoothing the
+    whole volume in one piece would have put it.
+
+### Order against simplification
+
+Smooth first. At a 10× reduction, with VTK quadric decimation on both paths so
+the order is the only variable:
+
+| order | mean distance to full-res | worst | volume kept | roughness |
+| --- | --- | --- | --- | --- |
+| simplify only | 0.100 vx | 0.70 | 97.8% | 33.6° |
+| Taubin then simplify | 0.103 vx | 0.48 | 98.2% | 26.3° |
+| simplify then Taubin | 0.325 vx | 2.71 | 88.6% | 22.8° |
+
+Smoothing first costs essentially nothing in fidelity and improves the worst
+case; smoothing afterwards deviates 3× further and loses 11% of the volume,
+because a decimated mesh has no high-frequency detail left to remove and the
+filter eats structure instead.

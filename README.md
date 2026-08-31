@@ -22,7 +22,9 @@ mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 
 ## What makes it different
 
-serra uses **multi-label surface nets** (dual contouring) rather than marching cubes.
+serra uses **multi-label surface nets** (dual contouring) rather than marching cubes,
+following [Frisken (2022)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9623606/) — see
+[docs/references.md](docs/references.md) for the full lineage and how to cite.
 Vertices sit inside cells at a position determined by where the label boundary
 crosses the cell, instead of being pinned to voxel-edge midpoints. That removes the
 staircase artifact, which shows up most clearly in surface area.
@@ -48,8 +50,11 @@ Other properties:
 - **Deterministic.** Identical output regardless of thread count, memory order,
   dtype width, or platform — including under relaxation, which uses Jacobi
   iteration so no result depends on visit order.
-- **Chunk-seam exact.** Meshed with a 1-voxel halo, vertices on a shared seam are
-  bit-identical between neighbouring chunks, so chunks stitch by vertex dedup alone.
+- **Chunk-seam exact.** Meshed with a 2-voxel positive-only halo and
+  `owned_shape` set, vertices on a shared seam are bit-identical between
+  neighbouring chunks, so chunks stitch by vertex dedup alone. Dual contouring
+  reads two cell layers per face, so one voxel of halo is not enough — see
+  [docs/chunked.md](docs/chunked.md).
 
 ## How it looks
 
@@ -204,6 +209,13 @@ conflicts between distributions. The project itself is still serra.
 
 Under active development. See `docs/` for the user guide and the developer guide to
 the module layout.
+
+## Citing
+
+The method is Frisken, S. F. (2022), *SurfaceNets for Multi-Label Segmentations
+with Preservation of Sharp Boundaries*, Journal of Computer Graphics Techniques
+11(1), 34-54. For this implementation see `CITATION.cff`; the full reference
+list is in [docs/references.md](docs/references.md).
 
 ## License
 

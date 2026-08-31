@@ -25,6 +25,7 @@ nav:
       - PyChunkedGraph: pychunkedgraph.md
   - Developer guide: developer.md
   - API reference: reference.md
+  - References: references.md
 
 markdown_extensions:
   - admonition
