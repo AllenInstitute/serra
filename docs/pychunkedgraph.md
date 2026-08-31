@@ -147,6 +147,38 @@ reasonable — but measured on real data the damage is near-identical:
 A pre-existing property of the pipeline, not something serra introduces. No
 change needed.
 
+### Compressed size: a coarse bin is what saves it
+
+The natural expectation is that serra's smoother surfaces compress *better* —
+Draco predicts each vertex from its neighbours and entropy-codes the residual,
+and terracing looks like high-frequency detail. Measured on 24 objects between
+the 70th and 99th size percentile, undecimated, bytes per face:
+
+| quantization | bin | zmesh | serra k=0 | serra k=3 | k=3 vs zmesh |
+| --- | --- | --- | --- | --- | --- |
+| **10 bits (PyChunkedGraph)** | **21 nm** | 0.635 | 0.638 | 0.624 | **0.98** |
+| 12 bits | 5.2 nm | 0.787 | 0.969 | 0.964 | 1.22 |
+| 14 bits | 1.3 nm | 0.873 | 1.277 | 1.331 | 1.52 |
+| 16 bits | 0.3 nm | 0.861 | 1.449 | 1.718 | 2.00 |
+
+The expectation is backwards. Terracing is not noise to an entropy coder:
+marching-cubes vertices land on a small, highly repetitive set of positions, so
+their residuals code cheaply, and zmesh's cost saturates around 0.87 bytes/face
+once the bin is finer than its own vertex lattice. serra's vertices sit at
+continuous sub-voxel positions whose residuals do not repeat, and at a fine bin
+that costs up to 2×.
+
+What rescues it is that the pipeline's bin — 21 nm, two thirds of a voxel — is
+coarser than everything that distinguishes the two surfaces. Both collapse onto
+the same lattice, and serra ends up marginally *smaller*. The same holds after
+decimation, within 2% at every reduction factor from 1× to 50×
+(`bench/draco_compression.py`).
+
+The practical consequence is a constraint rather than a win: serra is a drop-in
+for storage cost at PyChunkedGraph's settings, but anyone raising
+`quantization_bits` to preserve serra's sub-voxel placement should expect the
+stored meshes to grow.
+
 ## What serra must do, and does
 
 The pipeline welds by exact coordinate equality, so serra has to make seam

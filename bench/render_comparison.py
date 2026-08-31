@@ -1,8 +1,12 @@
 """Render side-by-side comparison figures of zmesh against serra.
 
-Meshes the three largest objects in the connectomics test volume with each
-implementation and renders them from an identical camera, so any difference in
-the image is a difference in the geometry.
+Meshes three objects from the test volume with each implementation and renders
+them from an identical camera, so any difference in the image is a difference in
+the geometry.
+
+Objects are sampled around a size percentile rather than taken from the top: the
+largest object in a cutout is usually a cell body or a trunk spanning the whole
+box, which says little about the surfaces most objects get.
 
 Flat shading is deliberate: it makes individual triangles visible, which is what
 distinguishes a staircased surface from a smooth one. Smooth (Phong) shading
@@ -27,9 +31,11 @@ import numpy as np
 RESOLUTION = (32.0, 32.0, 40.0)  # nanometres per voxel, per array axis
 DEFAULT_VOLUME = "/Users/forrestc/ConnectomeStack/zmesh/connectomics.npy.gz"
 
-# A single fixed viewing direction, so every panel is directly comparable.
-VIEW_DIRECTION = np.array([0.55, -0.75, 0.38])
-UP = (0.0, 0.0, 1.0)
+# Look straight down the Z axis with +Y up, so +X runs to the right — the
+# orientation Neuroglancer shows, which makes these figures directly
+# comparable with a screenshot from the dataset. Fixed across every panel.
+VIEW_DIRECTION = np.array([0.0, 0.0, -1.0])
+UP = (0.0, 1.0, 0.0)
 
 
 def load(path: str) -> np.ndarray:
@@ -39,13 +45,31 @@ def load(path: str) -> np.ndarray:
     return np.load(path)
 
 
-def largest_labels(volume: np.ndarray, count: int) -> list[tuple[int, int]]:
-    """The `count` most voluminous objects, as (label, voxel count)."""
+def labels_at_percentile(
+    volume: np.ndarray, count: int, percentile: float
+) -> list[tuple[int, int]]:
+    """Objects around the given size percentile, as (label, voxel count).
+
+    The largest objects in a volume are unrepresentative: they are usually a
+    single cell body or a trunk spanning the whole cutout, so a figure built
+    from them says little about the surfaces most objects get. Sampling around
+    a percentile picks objects big enough to see and typical of the data.
+    """
     labels, counts = np.unique(volume, return_counts=True)
     keep = labels != 0
     labels, counts = labels[keep], counts[keep]
-    order = np.argsort(counts)[::-1][:count]
-    return [(int(labels[i]), int(counts[i])) for i in order]
+    order = np.argsort(counts)
+    labels, counts = labels[order], counts[order]
+
+    # Spread the picks a little either side so they are not near-identical.
+    spread = np.linspace(percentile - 2.0, percentile + 2.0, count)
+    picks = []
+    for p in spread:
+        i = int(round(np.clip(p, 0, 100) / 100.0 * (len(labels) - 1)))
+        while i in [j for j, _ in picks] and i + 1 < len(labels):
+            i += 1
+        picks.append((i, None))
+    return [(int(labels[i]), int(counts[i])) for i, _ in picks]
 
 
 def to_polydata(vertices: np.ndarray, faces: np.ndarray):
@@ -57,7 +81,21 @@ def to_polydata(vertices: np.ndarray, faces: np.ndarray):
     return pv.PolyData(vertices.astype(np.float64), padded)
 
 
-def render_panel(mesh, size, colour, bounds, detail=None):
+def panel_shape(bounds, size, lo=0.45, hi=1.7):
+    """Panel dimensions matched to the object's on-screen aspect ratio.
+
+    The camera is fixed, so X and Y of the bounding box are what the viewer
+    sees. A square panel wastes most of its pixels on a long thin process —
+    which is what most objects in neuropil are — so the panel is shaped like the
+    object instead, clamped so a figure never becomes a sliver or a tower.
+    """
+    x_extent = bounds[1] - bounds[0]
+    y_extent = bounds[3] - bounds[2]
+    aspect = float(np.clip(y_extent / max(x_extent, 1e-9), lo, hi))
+    return (size, int(round(size * aspect)))
+
+
+def render_panel(mesh, size, colour, bounds, detail=None, zoom_out=1.0):
     """One panel.
 
     `bounds` frames the whole object and is shared by every panel in a row, so
@@ -81,7 +119,25 @@ def render_panel(mesh, size, colour, bounds, detail=None):
     plotter.enable_anti_aliasing("ssaa")
     plotter.camera.parallel_projection = True
     plotter.view_vector(VIEW_DIRECTION, viewup=UP)
-    plotter.reset_camera(bounds=bounds)
+
+    # The framing is set by hand rather than with reset_camera, which sizes the
+    # view from the bounding *sphere* and so zooms out by however far the object
+    # runs in Z — invisible depth, for a camera looking down that axis. These
+    # objects are long processes, so that alone shrank them to a few percent of
+    # the panel. Only the X and Y extents can be seen, so only they set the
+    # scale; zoom_out then leaves a margin.
+    centre = (
+        (bounds[0] + bounds[1]) / 2,
+        (bounds[2] + bounds[3]) / 2,
+        (bounds[4] + bounds[5]) / 2,
+    )
+    half_y = (bounds[3] - bounds[2]) / 2
+    half_x = (bounds[1] - bounds[0]) / 2
+    plotter.camera.focal_point = centre
+    plotter.camera.position = tuple(
+        c - d * (bounds[5] - bounds[4] + 1000.0) for c, d in zip(centre, VIEW_DIRECTION)
+    )
+    plotter.camera.parallel_scale = max(half_y, half_x * size[1] / size[0]) * zoom_out
 
     if detail is not None:
         focal, half_width = detail
@@ -231,7 +287,30 @@ def main() -> None:
     parser.add_argument("--zmesh", default="/Users/forrestc/ConnectomeStack/zmesh")
     parser.add_argument("--out", default="docs/images")
     parser.add_argument("--count", type=int, default=3)
+    parser.add_argument(
+        "--zoom-out",
+        type=float,
+        default=1.35,
+        help="widen the overview beyond a tight fit, so the object is not clipped",
+    )
+    parser.add_argument(
+        "--percentile",
+        type=float,
+        default=80.0,
+        help="object size percentile to sample, rather than the largest objects",
+    )
     parser.add_argument("--size", type=int, default=520)
+    parser.add_argument(
+        "--simplify",
+        type=int,
+        default=0,
+        help=(
+            "reduce each mesh to roughly 1/N of its faces. Both meshers are "
+            "driven to the same face count rather than the same max_error, "
+            "since at equal max_error they decimate by different amounts and "
+            "the comparison would not be like for like."
+        ),
+    )
     parser.add_argument(
         "--detail-nm",
         type=float,
@@ -250,8 +329,9 @@ def main() -> None:
     os.makedirs(args.out, exist_ok=True)
 
     volume = load(args.volume)
-    targets = largest_labels(volume, args.count)
+    targets = labels_at_percentile(volume, args.count, args.percentile)
     print(f"volume {volume.shape} {volume.dtype}")
+    print(f"objects at the {args.percentile:g}th size percentile:")
     for label, voxels in targets:
         print(f"  label {label}: {voxels:,} voxels")
 
@@ -265,10 +345,25 @@ def main() -> None:
     print("meshing with serra (relaxation=3) ...")
     s3 = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION), relaxation=3).mesh(volume)
 
+    # A max_error large enough not to bind, so the face-count target is what
+    # decides the result and both meshers are held to the same budget.
+    unbounded = 1e9
+    reduce_to = args.simplify
+
+    def get_zmesh(lab):
+        if reduce_to > 1:
+            return zm.get(lab, reduction_factor=reduce_to, max_error=unbounded)
+        return zm.get(lab)
+
+    def get_serra(mesher, lab):
+        if reduce_to > 1:
+            return mesher.get(lab, reduction_factor=reduce_to, max_error=unbounded)
+        return mesher.get(lab)
+
     variants = [
-        ("zmesh (marching cubes)", lambda lab: zm.get(lab), "#c98f7a"),
-        ("serra relaxation=0", lambda lab: s0.get(lab), "#8fa9d0"),
-        ("serra relaxation=3", lambda lab: s3.get(lab), "#8fd0ab"),
+        ("zmesh (marching cubes)", get_zmesh, "#c98f7a"),
+        ("serra relaxation=0", lambda lab: get_serra(s0, lab), "#8fa9d0"),
+        ("serra relaxation=3", lambda lab: get_serra(s3, lab), "#8fd0ab"),
     ]
 
     for rank, (label, voxels) in enumerate(targets, start=1):
@@ -287,8 +382,8 @@ def main() -> None:
         # Percentiles rather than min/max: these objects often have a small
         # disconnected fragment far from the main body, and framing to the full
         # bounding box would shrink the part worth looking at.
-        lo = np.percentile(reference, 1.5, axis=0)
-        hi = np.percentile(reference, 98.5, axis=0)
+        lo = np.percentile(reference, 0.2, axis=0)
+        hi = np.percentile(reference, 99.8, axis=0)
         bounds = (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
 
         # Aim the close-up at a real point on the surface: the vertex nearest
@@ -297,13 +392,12 @@ def main() -> None:
         nearest = int(np.argmin(((reference - centroid) ** 2).sum(1)))
         detail = (reference[nearest], args.detail_nm)
 
+        over_shape = panel_shape(bounds, args.size)
         overview_row, detail_row = [], []
         for name, mesh, colour in meshes:
             poly = to_polydata(mesh.vertices, mesh.faces)
-            # These objects are wide and flat, so the overview gets a wide panel
-            # while the close-up stays square.
             over = render_panel(
-                poly, (args.size, int(args.size * 0.60)), colour, bounds
+                poly, over_shape, colour, bounds, zoom_out=args.zoom_out
             )
             deep = render_panel(
                 poly, (args.size, args.size), colour, bounds, detail=detail
@@ -318,7 +412,8 @@ def main() -> None:
             [
                 label_strip(
                     args.size * 3 + 16,
-                    f"object {label} - {voxels // 1000}K voxels - whole object",
+                    f"object {label} - {voxels // 1000}K voxels - whole object"
+                    + (f" - simplified {reduce_to}x" if reduce_to > 1 else ""),
                 ),
                 beside(overview_row),
                 label_strip(
@@ -328,7 +423,8 @@ def main() -> None:
                 beside(detail_row),
             ]
         )
-        path = os.path.join(args.out, f"compare_{rank}_label{label}.png")
+        prefix = "simplified" if reduce_to > 1 else "compare"
+        path = os.path.join(args.out, f"{prefix}_{rank}_label{label}.png")
         save_png(path, figure)
         print(f"  wrote {path}  ({figure.shape[1]}x{figure.shape[0]})")
 

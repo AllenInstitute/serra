@@ -53,19 +53,22 @@ Other properties:
 
 ## How it looks
 
-The three largest objects in the 512³ connectomics test volume, meshed by zmesh
-and by serra, rendered from an identical camera with flat shading. Flat shading
-is deliberate — it makes individual triangles visible, which is exactly what
+Three objects from the 512³ MICrONS test volume, meshed by zmesh and by serra
+and rendered from an identical camera with flat shading. Flat shading is
+deliberate — it makes individual triangles visible, which is exactly what
 distinguishes a staircased surface from a smooth one.
 
-The top row of each figure is the whole object; the bottom row is a close-up
-spanning 1400 nm of the same surface, where the difference is obvious.
+The objects are sampled around the 80th size percentile rather than taken from
+the top: the largest object in a cutout is a cell body or a trunk crossing the
+whole box, and says little about the surfaces most objects get. The top row of
+each figure is the whole object, the bottom row a close-up spanning 1400 nm of
+the same surface.
 
 | | |
 | --- | --- |
-| ![object 25024949](docs/images/compare_1_label25024949.png) | 36.8M voxels, ~1.65M faces |
-| ![object 28336523](docs/images/compare_2_label28336523.png) | 8.2M voxels, ~5.9M faces |
-| ![object 28673074](docs/images/compare_3_label28673074.png) | 1.8M voxels, ~635K faces |
+| ![object 28927963](docs/images/compare_1_label28927963.png) | 38K voxels, 47K faces |
+| ![object 79445759](docs/images/compare_2_label79445759.png) | 42K voxels, 54K faces |
+| ![object 60033456](docs/images/compare_3_label60033456.png) | 47K voxels, 57K faces |
 
 Marching cubes produces axis-aligned terraces because its vertices are pinned to
 voxel-edge midpoints. serra's are placed inside each cell from where the label
@@ -73,10 +76,30 @@ boundary actually crosses it, so the terracing is gone even before relaxation;
 `relaxation=3` removes the remaining faceting. Face counts are within 1% across
 all three, so this is not a resolution difference.
 
+The same objects decimated 10× — the regime PyChunkedGraph actually stores, and
+the one where the input surface matters most, since a quadric simplifier keeps
+whatever the extractor gave it:
+
+| | |
+| --- | --- |
+| ![object 28927963 simplified](docs/images/simplified_1_label28927963.png) | 47K → 4.7K faces |
+| ![object 79445759 simplified](docs/images/simplified_2_label79445759.png) | 54K → 5.4K faces |
+| ![object 60033456 simplified](docs/images/simplified_3_label60033456.png) | 57K → 5.7K faces |
+
+### Against the mesh MICrONS publishes
+
+A 5 µm cutout around segment `864691136144674612` at 32×32×40 nm, with both
+meshers decimated to the face count of the LOD-0 mesh the dataset actually
+serves for that segment — so all four panels are drawn on the same budget:
+
+![segment 864691136144674612](docs/images/segment_864691136144674612.png)
+
 Regenerate with:
 
 ```bash
 python bench/render_comparison.py --zmesh ../zmesh --out docs/images
+python bench/render_comparison.py --zmesh ../zmesh --out docs/images --simplify 10
+python bench/render_segment.py --zmesh ../zmesh --out docs/images
 ```
 
 ## Performance
