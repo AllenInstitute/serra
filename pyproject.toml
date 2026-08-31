@@ -34,7 +34,7 @@ lint = ["ruff"]
 # Used by the benchmark and figure scripts. zmesh itself is imported from a
 # local checkout (see bench/render_comparison.py) so the comparison runs
 # against the exact build you have, not whatever is on PyPI.
-bench = ["pyvista", "scipy"]
+bench = ["pyvista", "scipy", "cloud-volume", "fastremap", "libigl"]
 
 [tool.uv]
 default-groups = ["dev", "docs", "lint"]

@@ -1,0 +1,29 @@
+{
+  "cloudpath": "gs://iarpa_microns/minnie/minnie65/seg_m1300",
+  "mip": 2,
+  "resolution_nm": [
+    32,
+    32,
+    40
+  ],
+  "origin_voxels": [
+    31872,
+    23728,
+    20396
+  ],
+  "shape": [
+    512,
+    512,
+    512
+  ],
+  "dtype": "uint16",
+  "objects": 20840,
+  "background_fraction": 0.02947171777486801,
+  "largest_object_fraction": 0.04123611003160477,
+  "top10_fraction": 0.13675927370786667,
+  "median_object_voxels": 56,
+  "segid_example": {
+    "fixture_label": 1,
+    "live_segment_id": 864691135501989106
+  }
+}

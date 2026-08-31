@@ -69,3 +69,56 @@ collapse.
     wall's rim, so the wall may no longer be exactly coincident from both sides.
     Each object stays individually watertight and manifold. At `relaxation=0`
     shared walls are exactly coincident, which the test suite checks.
+
+
+## Validation against zmesh on real data
+
+`bench/validate_winding.py` performs the check described in `CLAUDE.md`: classify
+sample points as inside or outside each mesh with a robust generalized winding
+number, confirm the volumes agree, and confirm that where the two disagree the
+points lie *close to the surface*. That last part is what distinguishes a
+genuine difference in where the surface was placed from an actual defect — a
+hole or an inverted patch produces disagreements scattered through the volume.
+
+The fixture is `data/microns_neuropil.npy.gz`: a 512³ cutout at 32×32×40 nm from
+`gs://iarpa_microns/minnie/minnie65/seg_m1300`, taken from dense neuropil near
+the centre of the imaged column. It holds **20,840 objects with a median size of
+56 voxels**, and no single object exceeds 4.1% of the volume — deliberately not a
+cell body, since serra is built for volumes with very many small objects.
+
+Over 24 objects spanning the size range, 20,000 sample points each:
+
+| | value |
+| --- | --- |
+| serra volume / true voxel volume | **0.982** (0.918–1.005) |
+| zmesh volume / true voxel volume | 0.968 (0.918–0.991) |
+| serra / zmesh volume | **1.015** (1.000–1.031) |
+| winding-number agreement | 94.7% of sampled points |
+| disagreeing points, distance to surface | median **0.47** voxels, worst **2.11** |
+| all sampled points, distance to surface | median 4.98 voxels |
+
+Two things to read from this.
+
+**serra is closer to the voxel truth than zmesh** — 0.982 against 0.968 — and
+both undershoot, which is expected: a surface drawn through the voxel boundary
+cuts the corners off a blocky object.
+
+**Every disagreement is a boundary effect.** Disagreeing points sit 11× closer to
+the surface than a typical sampled point, and none is further than 2.11 voxels
+from it. The two meshers place the surface slightly differently within about a
+voxel, and agree everywhere else. Nothing is scattered through the interior,
+which is what a hole or an inverted normal would produce.
+
+The raw agreement rate of 94.7% is not a defect either: most of these objects are
+tiny, so uniform sampling in their bounding box puts a large share of points
+within a voxel of the surface. Agreement is 99%+ on the larger objects and falls
+on the smallest purely through the surface-to-volume ratio.
+
+### Reproducing
+
+```bash
+uv sync --group bench
+python bench/download_microns.py            # re-fetch the cutout
+python bench/download_microns.py --survey   # re-run the region search
+python bench/validate_winding.py
+```
