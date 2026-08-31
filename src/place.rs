@@ -81,7 +81,9 @@ impl Default for Relaxation {
 /// mark_boundary`] marked the outermost cell layer, this makes the whole pass
 /// depend only on data the chunk already holds — so a chunk's mesh is
 /// reproducible from that chunk alone, whatever `iterations` is set to, and the
-/// halo stays at one voxel.
+/// halo does not grow with it. (The extractor needs two voxels of halo either
+/// way, because a quad spans two cell layers; the point here is that
+/// relaxation adds nothing to that.)
 pub fn relax(mesh: &mut LabelMesh, params: &Relaxation) {
     if params.iterations == 0 || mesh.quads.is_empty() {
         return;

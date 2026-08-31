@@ -10,21 +10,39 @@ The extractor is **multi-label SurfaceNets**, as described in:
 > [PMC9623606](https://pmc.ncbi.nlm.nih.gov/articles/PMC9623606/) ·
 > PMID 36325473
 
-Everything characteristic of serra comes from that paper: one vertex per cell
-rather than per crossed edge; labels treated as an index set so a single pass
-handles any number of them; quads dual to sign-changing edges; sharp boundaries
-preserved where three or more labels meet; and a fairing pass that displaces
-vertices by no more than a bounded distance from the cell.
+What serra takes from that paper:
 
-Two deliberate departures are worth naming, since they are the reason serra
-exists rather than a reimplementation:
+- **One vertex per cell**, rather than one per crossed edge as in marching
+  cubes, with quads dual to the edges whose two ends carry different labels.
+- **Labels as an index set.** An edge crosses when its endpoints differ, not
+  when an isovalue is crossed, so a single pass covers any number of labels and
+  adjacent labels share the cell's vertex position exactly
+  (`crossing_mask` and `cell_vertex` in `src/place.rs`).
+- **Centroid placement.** The vertex sits at the centroid of the crossed edges'
+  midpoints — a pure function of the 12-bit crossing pattern, which is why it
+  is a table lookup (`build_centroid` in `src/tables.rs`).
+- **Fairing with a bounded displacement**, so smoothing cannot drift the
+  surface arbitrarily far from the data (`Relaxation::max_deviation`).
 
-- **Fixed-point vertex positions.** Positions are integers in units of 1/256 of
-  a voxel, which makes a seam cell's vertex bit-identical in every chunk that
-  contains it. Without that, chunk meshes cannot be welded by exact equality.
-- **Pinned seam vertices during fairing.** Frisken's relaxation is global;
-  serra holds the outermost cell layer fixed so a chunk's mesh depends only on
-  that chunk's own array, whatever the iteration count. See
+Three places serra differs, which matter if you are comparing against the
+paper:
+
+- **No sharp-boundary preservation.** The paper's title contribution is
+  splitting a cell's vertex into *surface* and *edge* vertices where three or
+  more materials meet, so triple junctions stay sharp. serra does not do this:
+  `cell_vertex` sees only the crossing mask and has no notion of how many
+  materials are present. Its vertex splitting is a different mechanism, for a
+  different purpose — keeping each label's own surface 2-manifold where its
+  voxel set touches itself only diagonally.
+- **Fairing is per object, not per cell.** Frisken relaxes one position per
+  cell, shared by every label there. serra relaxes each label's mesh
+  independently, so a wall between two touching objects can drift apart at its
+  rim. Quantifying that is open work.
+- **Fixed-point vertex positions**, integers in units of 1/256 of a voxel, and
+  **pinned seam vertices during fairing**. Together these make a seam cell's
+  vertex bit-identical in every chunk that contains it and keep a chunk's mesh
+  reproducible from that chunk's own array, whatever the iteration count —
+  which is what lets chunks be welded by exact equality. See
   [Chunked meshing](chunked.md).
 
 ## Lineage
