@@ -13,6 +13,12 @@ pub struct TriangleMesh {
     pub vertices: Vec<[f32; 3]>,
     pub faces: Vec<[u32; 3]>,
     pub normals: Option<Vec<[f32; 3]>>,
+    /// Parallel to `vertices`: vertices simplification must not move or remove.
+    ///
+    /// Carried through from [`crate::extract::LabelMesh::pinned`], so the seam
+    /// of a chunk survives simplification unchanged. Empty when nothing is
+    /// pinned.
+    pub pinned: Vec<bool>,
 }
 
 /// How to interpret the extracted surface.
@@ -149,10 +155,17 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
         None
     };
 
+    let pinned = if raw.pinned.is_empty() {
+        Vec::new()
+    } else {
+        kept.iter().map(|&v| raw.pinned[v as usize]).collect()
+    };
+
     TriangleMesh {
         vertices,
         faces,
         normals,
+        pinned,
     }
 }
 
@@ -340,6 +353,7 @@ mod tests {
                         vertices: m.vertices.clone(),
                         faces: vec![*f],
                         normals: None,
+                        pinned: Vec::new(),
                     };
                     surface_area(&one)
                 })

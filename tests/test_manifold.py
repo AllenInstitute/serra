@@ -217,3 +217,62 @@ class TestBandedExtraction:
         for threads in (1, 14):
             mesh = serra_mesh.Mesher(threads=threads).mesh(a, close=True).get(1)
             assert_valid_closed_surface(mesh, expected_euler=2)
+
+
+class TestKnownSplitLimitation:
+    """A cell can carry more surface sheets than the label has components.
+
+    serra splits a cell's vertex once per 6-connected component of the label's
+    corners. That is not always enough: if the label is connected but the
+    *background* inside the cell is not, the surface passes through the cell as
+    two separate sheets, and they end up sharing the single vertex.
+
+    The smallest case is a cell with six label corners whose two background
+    corners are body-diagonal (mask 0b11100111). The label is 6-connected, so
+    one vertex is emitted, but there is a sheet around each background corner.
+
+    Found on real connectomics data, where it affects 10 of 133 objects in a
+    160^3 cutout. The fix is to split per connected component of the crossing
+    edges rather than of the label's corners.
+    """
+
+    @staticmethod
+    def pinch_volume():
+        a = np.zeros((8, 8, 8), np.uint32)
+        for x, y, z in [
+            (1, 0, 1),
+            (1, 1, 1),
+            (1, 1, 2),
+            (2, 0, 1),
+            (2, 0, 2),
+            (2, 1, 2),
+        ]:
+            a[x + 2, y + 2, z + 2] = 1
+        return a
+
+    def test_the_configuration_is_what_we_think_it_is(self):
+        """Guards the diagnosis, so this stays meaningful if the fix changes."""
+        a = self.pinch_volume()
+        mask = 0
+        for c in range(8):
+            dx, dy, dz = c & 1, (c >> 1) & 1, (c >> 2) & 1
+            if a[3 + dx, 2 + dy, 3 + dz]:
+                mask |= 1 << c
+        assert mask == 0b11100111
+        background = [c for c in range(8) if not (mask >> c) & 1]
+        # Body-diagonal: they differ along all three axes, so they are not
+        # 6-connected and form two separate background components.
+        assert bin(background[0] ^ background[1]).count("1") == 3
+
+    @pytest.mark.xfail(
+        reason="splitting is per label component, not per surface sheet",
+        strict=True,
+    )
+    def test_no_pinch_point(self):
+        mesh = serra_mesh.Mesher().mesh(self.pinch_volume(), close=True).get(1)
+        assert non_manifold_vertex_count(mesh) == 0
+
+    def test_edges_are_still_fine(self):
+        """Only the vertex is pinched; no edge is over-used."""
+        mesh = serra_mesh.Mesher().mesh(self.pinch_volume(), close=True).get(1)
+        assert non_manifold_edge_count(mesh) == 0

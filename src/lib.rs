@@ -9,6 +9,7 @@ pub mod mesh;
 pub mod orient;
 pub mod place;
 pub mod python;
+pub mod simplify;
 pub mod tables;
 
 use pyo3::prelude::*;

@@ -19,6 +19,7 @@ use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
 use crate::place::{relax, Relaxation};
+use crate::simplify::{simplify, SimplifyOptions};
 
 /// Arrays handed back for one object: vertices, faces, and optionally normals.
 type MeshArrays<'py> = (
@@ -244,12 +245,17 @@ impl Mesher {
     }
 
     /// Arrays for one object, or `None` if the label is absent.
-    #[pyo3(signature = (label, normals=false))]
+    ///
+    /// `reduction_factor` asks for that many times fewer faces;
+    /// `max_error` caps how far simplification may move any vertex.
+    #[pyo3(signature = (label, normals=false, reduction_factor=0, max_error=None))]
     fn get<'py>(
         &self,
         py: Python<'py>,
         label: u64,
         normals: bool,
+        reduction_factor: u32,
+        max_error: Option<f64>,
     ) -> PyResult<Option<MeshArrays<'py>>> {
         let Some(extraction) = self.extraction.as_ref() else {
             return Err(PyValueError::new_err(
@@ -266,7 +272,27 @@ impl Mesher {
             shape: self.shape,
             normals,
         };
-        let built = py.detach(move || build(raw, &options));
+        // Following zmesh: max_error defaults to one voxel of the coarsest axis.
+        let max_error =
+            max_error.unwrap_or_else(|| self.resolution.iter().cloned().fold(f64::MIN, f64::max));
+        if max_error < 0.0 {
+            return Err(PyValueError::new_err("max_error must be non-negative"));
+        }
+
+        let built = py.detach(move || {
+            let mut mesh = build(raw, &options);
+            if reduction_factor > 1 {
+                let target = mesh.faces.len() / reduction_factor as usize;
+                simplify(
+                    &mut mesh,
+                    &SimplifyOptions {
+                        target_faces: target,
+                        max_error,
+                    },
+                );
+            }
+            mesh
+        });
         Ok(Some(to_arrays(py, built)))
     }
 

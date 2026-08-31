@@ -185,15 +185,52 @@ class Mesher:
         """Labels present in the volume, ascending. Excludes background."""
         return self._inner.ids()
 
-    def get(self, label: int, normals: bool = False) -> Mesh:
+    def get(
+        self,
+        label: int,
+        normals: bool = False,
+        reduction_factor: int = 0,
+        max_error: Optional[float] = None,
+    ) -> Mesh:
         """The mesh for one object.
+
+        Parameters
+        ----------
+        normals:
+            Also compute unit vertex normals.
+        reduction_factor:
+            Ask for this many times fewer faces. ``0`` or ``1`` means no
+            simplification.
+        max_error:
+            Cap on how far simplification may move a vertex, in the same units
+            as ``voxel_resolution``. Defaults to the largest voxel dimension,
+            matching zmesh.
+
+        Notes
+        -----
+        Simplification preserves topology: it applies the link condition, so a
+        closed 2-manifold stays a closed 2-manifold, and rejects collapses that
+        would duplicate a face or flip a normal.
+
+        It also leaves the chunk seam alone. Vertices pinned during extraction
+        are never collapsed, which keeps not just their positions but the edges
+        between them intact — so chunks still stitch after simplification.
+        A consequence is that the band along a chunk seam stays at full
+        resolution.
 
         Raises
         ------
         KeyError
             If the label is not present. Use ``label in mesher`` to check.
         """
-        result = self._inner.get(int(label), normals=normals)
+        if reduction_factor < 0:
+            raise ValueError("reduction_factor must be non-negative")
+        result = self._inner.get(
+            int(label),
+            normals=normals,
+            reduction_factor=int(reduction_factor),
+            max_error=max_error,
+        )
         if result is None:
             raise KeyError(f"label {label} is not present in the meshed volume")
         vertices, faces, vertex_normals = result
@@ -201,14 +238,14 @@ class Mesher:
             vertices=vertices, faces=faces, normals=vertex_normals, id=int(label)
         )
 
-    def get_all(self, normals: bool = False) -> Iterator[Mesh]:
+    def get_all(self, normals: bool = False, **kwargs) -> Iterator[Mesh]:
         """Every object's mesh, in ascending label order.
 
         Yields one at a time so the caller can process and discard, rather than
         holding every mesh in memory at once.
         """
         for label in self.ids():
-            yield self.get(int(label), normals=normals)
+            yield self.get(int(label), normals=normals, **kwargs)
 
     def erase(self, label: int) -> bool:
         """Drop one object's surface, freeing its memory."""
