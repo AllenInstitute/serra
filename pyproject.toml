@@ -29,8 +29,10 @@ module-name = "serra._serra"
 dev = ["pytest", "pytest-cov", "ipykernel", "bump-my-version", "maturin"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 lint = ["ruff"]
-# Used by the analytic-geometry and benchmark suites.
-bench = ["zmesh", "scipy"]
+# Used by the benchmark and figure scripts. zmesh itself is imported from a
+# local checkout (see bench/render_comparison.py) so the comparison runs
+# against the exact build you have, not whatever is on PyPI.
+bench = ["pyvista", "scipy"]
 
 [tool.uv]
 default-groups = ["dev", "docs", "lint"]
