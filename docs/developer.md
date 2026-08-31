@@ -13,7 +13,7 @@ The crate is a pipeline, one module per stage. Data flows top to bottom.
 | `src/extract.rs` | The single pass, and its parallel banding |
 | `src/mesh.rs` | Physical coordinates, triangulation, normals |
 | `src/python.rs` | PyO3 bindings — the only module that knows about Python |
-| `python/serra/` | `Mesher` front end, `Mesh` container, file formats |
+| `python/serra_mesh/` | `Mesher` front end, `Mesh` container, file formats |
 
 Two rules keep this tidy. Orientation is applied **once, on output**, so the hot
 loop never thinks about axis order. And Python appears in exactly one module, so

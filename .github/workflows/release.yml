@@ -1,0 +1,110 @@
+name: release
+
+# Manual, and dry-run by default: a mistaken click should not publish.
+on:
+  workflow_dispatch:
+    inputs:
+      part:
+        description: Which part of the version to bump
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+      dry-run:
+        description: Bump and build, but do not tag or publish
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - name: Configure the committer
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Bump
+        id: bump
+        run: |
+          # bump-my-version updates both pyproject.toml and Cargo.toml, which
+          # must stay in lockstep or the wheel and the metadata disagree.
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            uvx bump-my-version bump --dry-run --verbose "${{ inputs.part }}"
+            echo "version=dry-run" >> "$GITHUB_OUTPUT"
+          else
+            uvx bump-my-version bump "${{ inputs.part }}"
+            git push --follow-tags
+            echo "version=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: [bump]
+    if: ${{ inputs.dry-run == false }}
+    name: ${{ matrix.platform.os }} ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: linux, runner: ubuntu-latest, target: x86_64 }
+          - { os: linux, runner: ubuntu-24.04-arm, target: aarch64 }
+          - { os: macos, runner: macos-13, target: x86_64 }
+          - { os: macos, runner: macos-latest, target: aarch64 }
+          - { os: windows, runner: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+          sccache: "true"
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}
+          path: dist
+
+  sdist:
+    needs: [bump]
+    if: ${{ inputs.dry-run == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  publish:
+    needs: [build, sdist]
+    if: ${{ inputs.dry-run == false }}
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI verifies this workflow's OIDC identity, so there
+    # is no API token to store or leak. Configure the publisher on PyPI for
+    # AllenInstitute/serra, workflow release.yml, environment pypi.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/serra-mesh
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

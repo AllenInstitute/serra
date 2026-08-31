@@ -244,7 +244,7 @@ def main() -> None:
     import pyvista as pv
     import zmesh
 
-    import serra
+    import serra_mesh
 
     pv.OFF_SCREEN = True
     os.makedirs(args.out, exist_ok=True)
@@ -260,10 +260,10 @@ def main() -> None:
     zm.mesh(volume)
 
     print("meshing with serra (relaxation=0) ...")
-    s0 = serra.Mesher(voxel_resolution=list(RESOLUTION)).mesh(volume)
+    s0 = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION)).mesh(volume)
 
     print("meshing with serra (relaxation=3) ...")
-    s3 = serra.Mesher(voxel_resolution=list(RESOLUTION), relaxation=3).mesh(volume)
+    s3 = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION), relaxation=3).mesh(volume)
 
     variants = [
         ("zmesh (marching cubes)", lambda lab: zm.get(lab), "#c98f7a"),

@@ -19,11 +19,11 @@ from conftest import (
     sphere_mask,
 )
 
-import serra
+import serra_mesh
 
 
 def mesh_all(mask, close=True):
-    mesher = serra.Mesher().mesh(mask, close=close)
+    mesher = serra_mesh.Mesher().mesh(mask, close=close)
     return {int(i): mesher.get(int(i)) for i in mesher.ids()}
 
 
@@ -191,7 +191,7 @@ class TestBandedExtraction:
     @pytest.mark.parametrize("threads", [1, 2, 4, 8, 14])
     def test_sphere_stays_closed_however_it_is_banded(self, threads):
         mask = sphere_mask(24)
-        mesher = serra.Mesher(threads=threads).mesh(mask, close=True)
+        mesher = serra_mesh.Mesher(threads=threads).mesh(mask, close=True)
         assert_valid_closed_surface(mesher.get(1), expected_euler=2)
 
     @pytest.mark.parametrize("threads", [1, 4, 14])
@@ -203,7 +203,7 @@ class TestBandedExtraction:
             centre = (15, 15, 12 + n * 19)
             d = sum((grid[k] - centre[k]) ** 2 for k in range(3))
             a[d <= 8**2] = n + 1
-        mesher = serra.Mesher(threads=threads).mesh(a, close=True)
+        mesher = serra_mesh.Mesher(threads=threads).mesh(a, close=True)
         assert len(mesher) == 6
         for label in mesher.ids():
             assert_valid_closed_surface(mesher.get(int(label)), expected_euler=2)
@@ -215,5 +215,5 @@ class TestBandedExtraction:
         disc = (y - 11.5) ** 2 + (x - 11.5) ** 2 <= 7**2
         a[:, :, 4:156][disc] = 1
         for threads in (1, 14):
-            mesh = serra.Mesher(threads=threads).mesh(a, close=True).get(1)
+            mesh = serra_mesh.Mesher(threads=threads).mesh(a, close=True).get(1)
             assert_valid_closed_surface(mesh, expected_euler=2)

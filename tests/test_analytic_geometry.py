@@ -29,14 +29,14 @@ from conftest import (
     torus_mask,
 )
 
-import serra
+import serra_mesh
 
 # Smooth closed surfaces sit in this band; see the module docstring.
 SMOOTH_AREA_BAND = (0.0, 0.04)
 
 
 def mesh_of(mask, resolution=(1, 1, 1), normals=False):
-    mesher = serra.Mesher(voxel_resolution=list(resolution)).mesh(mask, close=True)
+    mesher = serra_mesh.Mesher(voxel_resolution=list(resolution)).mesh(mask, close=True)
     return mesher.get(1, normals=normals)
 
 

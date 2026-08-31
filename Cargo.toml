@@ -1,5 +1,5 @@
 [package]
-name = "serra"
+name = "serra-mesh"
 version = "0.0.1"
 edition = "2021"
 rust-version = "1.74"
@@ -9,7 +9,7 @@ repository = "https://github.com/AllenInstitute/serra"
 readme = "README.md"
 
 [lib]
-name = "_serra"
+name = "_serra_mesh"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

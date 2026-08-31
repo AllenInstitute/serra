@@ -6,8 +6,8 @@ from typing import Iterable, Iterator, Sequence
 
 import numpy as np
 
-from serra import _serra
-from serra.mesh import Mesh
+from serra_mesh import _serra_mesh
+from serra_mesh.mesh import Mesh
 
 __all__ = ["Mesher"]
 
@@ -100,7 +100,7 @@ class Mesher:
             raise ValueError("relaxation must be non-negative")
         if self.threads < 0:
             raise ValueError("threads must be non-negative (0 means all cores)")
-        self._inner = _serra.Mesher(
+        self._inner = _serra_mesh.Mesher(
             voxel_resolution=[float(v) for v in self.voxel_resolution],
             axis_order=axis_order,
             y_down=y_down,

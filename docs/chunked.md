@@ -18,7 +18,7 @@ lo = index * OWN
 hi = lo + OWN
 chunk = volume[max(lo - HALO, 0) : hi + HALO, ...]
 
-mesher = serra.Mesher(voxel_resolution=[32, 32, 40], threads=1)
+mesher = serra_mesh.Mesher(voxel_resolution=[32, 32, 40], threads=1)
 mesher.mesh(chunk, close=False)
 ```
 
@@ -63,7 +63,7 @@ Set `threads=1` when running one chunk per process, or every process will try
 to claim every core:
 
 ```python
-serra.Mesher(threads=1)
+serra_mesh.Mesher(threads=1)
 ```
 
 See [the README](https://github.com/AllenInstitute/serra#controlling-parallelism)

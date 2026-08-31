@@ -8,9 +8,9 @@ thousands of distinct objects, so it makes **one pass over the volume** however
 many labels are present.
 
 ```python
-import serra
+import serra_mesh
 
-mesher = serra.Mesher(voxel_resolution=[32, 32, 40])
+mesher = serra_mesh.Mesher(voxel_resolution=[32, 32, 40])
 mesher.mesh(cutout)          # a 3-D array of unsigned integer labels
 mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 ```
@@ -18,7 +18,7 @@ mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 ## Install
 
 ```bash
-pip install serra          # see the repository README for the current name
+pip install serra-mesh          # see the repository README for the current name
 ```
 
 Wheels are built against Python's stable ABI, so one wheel per platform covers

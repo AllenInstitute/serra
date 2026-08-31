@@ -14,7 +14,7 @@ pub mod tables;
 use pyo3::prelude::*;
 
 #[pymodule]
-fn _serra(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _serra_mesh(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     python::register(m)?;
     Ok(())

@@ -28,7 +28,7 @@ type MeshArrays<'py> = (
 );
 
 /// Extracts every object's surface from a labelled volume in a single pass.
-#[pyclass(module = "serra._serra")]
+#[pyclass(module = "serra_mesh._serra_mesh")]
 pub struct Mesher {
     resolution: [f64; 3],
     layout: Layout,

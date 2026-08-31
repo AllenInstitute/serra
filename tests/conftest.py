@@ -164,8 +164,8 @@ def assert_valid_closed_surface(mesh, expected_euler: int = 2) -> None:
 
 @pytest.fixture(scope="module")
 def sphere20():
-    import serra
+    import serra_mesh
 
     mask = sphere_mask(20)
-    mesher = serra.Mesher().mesh(mask, close=True)
+    mesher = serra_mesh.Mesher().mesh(mask, close=True)
     return mesher.get(1, normals=True), mask

@@ -1,5 +1,5 @@
 # API reference
 
-::: serra.Mesher
+::: serra_mesh.Mesher
 
-::: serra.Mesh
+::: serra_mesh.Mesh

@@ -38,9 +38,9 @@ def load(path: str) -> np.ndarray:
 
 
 def run_serra(volume: np.ndarray, extract_all: bool) -> dict:
-    import serra
+    import serra_mesh
 
-    mesher = serra.Mesher(voxel_resolution=list(RESOLUTION))
+    mesher = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION))
     start = time.perf_counter()
     mesher.mesh(volume)
     march = time.perf_counter() - start

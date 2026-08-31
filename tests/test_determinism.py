@@ -21,7 +21,7 @@ import textwrap
 import numpy as np
 import pytest
 
-import serra
+import serra_mesh
 
 
 def multilabel_volume(shape=(24, 20, 18), labels=6, seed=0):
@@ -52,7 +52,7 @@ def fingerprint(mesher):
 
 
 def mesh_and_fingerprint(array, **kwargs):
-    return fingerprint(serra.Mesher(**kwargs).mesh(array, close=True))
+    return fingerprint(serra_mesh.Mesher(**kwargs).mesh(array, close=True))
 
 
 class TestRepeatability:
@@ -62,14 +62,14 @@ class TestRepeatability:
 
     def test_reusing_one_mesher(self):
         a = multilabel_volume()
-        mesher = serra.Mesher()
+        mesher = serra_mesh.Mesher()
         first = fingerprint(mesher.mesh(a, close=True))
         second = fingerprint(mesher.mesh(a, close=True))
         assert first == second
 
     def test_get_is_pure(self):
         """Repeated retrieval of the same label must not drift."""
-        mesher = serra.Mesher().mesh(multilabel_volume(), close=True)
+        mesher = serra_mesh.Mesher().mesh(multilabel_volume(), close=True)
         label = int(mesher.ids()[0])
         a = mesher.get(label, normals=True)
         b = mesher.get(label, normals=True)
@@ -79,7 +79,7 @@ class TestRepeatability:
 
     def test_erasing_one_label_does_not_change_the_others(self):
         a = multilabel_volume()
-        mesher = serra.Mesher().mesh(a, close=True)
+        mesher = serra_mesh.Mesher().mesh(a, close=True)
         ids = [int(i) for i in mesher.ids()]
         before = {i: mesher.get(i).vertices.copy() for i in ids[1:]}
         mesher.erase(ids[0])
@@ -145,8 +145,8 @@ class TestLabelValues:
         for old, new in mapping.items():
             remapped[a == old] = new
 
-        original = serra.Mesher().mesh(a, close=True)
-        renamed = serra.Mesher().mesh(remapped, close=True)
+        original = serra_mesh.Mesher().mesh(a, close=True)
+        renamed = serra_mesh.Mesher().mesh(remapped, close=True)
         for old, new in mapping.items():
             np.testing.assert_array_equal(
                 original.get(old).vertices, renamed.get(new).vertices
@@ -157,7 +157,7 @@ class TestLabelValues:
 
     def test_ids_are_always_ascending(self):
         a = multilabel_volume(labels=8, seed=3)
-        ids = serra.Mesher().mesh(a, close=True).ids()
+        ids = serra_mesh.Mesher().mesh(a, close=True).ids()
         assert np.all(np.diff(ids) > 0)
 
 
@@ -193,13 +193,13 @@ class TestThreadIndependence:
         assert mesh_and_fingerprint(a, threads=1) == mesh_and_fingerprint(a, threads=8)
 
     def test_thread_count_is_reported(self):
-        assert serra.Mesher(threads=3).effective_threads == 3
-        assert serra.Mesher(threads=1).effective_threads == 1
-        assert serra.Mesher(threads=0).effective_threads >= 1
+        assert serra_mesh.Mesher(threads=3).effective_threads == 3
+        assert serra_mesh.Mesher(threads=1).effective_threads == 1
+        assert serra_mesh.Mesher(threads=0).effective_threads >= 1
 
     def test_negative_thread_count_rejected(self):
         with pytest.raises(ValueError, match="non-negative"):
-            serra.Mesher(threads=-1)
+            serra_mesh.Mesher(threads=-1)
 
     ENV_SCRIPT = textwrap.dedent(
         """
@@ -207,9 +207,9 @@ class TestThreadIndependence:
         import numpy as np
         sys.path.insert(0, {tests_dir!r})
         from test_determinism import multilabel_volume, fingerprint
-        import serra
+        import serra_mesh
         a = multilabel_volume(shape=(40, 36, 32), labels=10, seed=1)
-        print(fingerprint(serra.Mesher().mesh(a, close=True)))
+        print(fingerprint(serra_mesh.Mesher().mesh(a, close=True)))
         """
     )
 

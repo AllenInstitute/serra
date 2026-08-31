@@ -23,7 +23,7 @@ from conftest import (
     torus_mask,
 )
 
-import serra
+import serra_mesh
 
 RADIUS = 20.0
 
@@ -34,7 +34,7 @@ def sphere():
 
 
 def relaxed(mask, k, **kwargs):
-    mesher = serra.Mesher(relaxation=k, **kwargs).mesh(mask, close=True)
+    mesher = serra_mesh.Mesher(relaxation=k, **kwargs).mesh(mask, close=True)
     return mesher.get(1, normals=True)
 
 
@@ -75,7 +75,7 @@ class TestQuality:
 
     def test_zero_iterations_changes_nothing(self, sphere):
         mask, _ = sphere
-        plain = serra.Mesher().mesh(mask, close=True).get(1)
+        plain = serra_mesh.Mesher().mesh(mask, close=True).get(1)
         explicit = relaxed(mask, 0)
         np.testing.assert_array_equal(plain.vertices, explicit.vertices)
         np.testing.assert_array_equal(plain.faces, explicit.faces)
@@ -97,7 +97,7 @@ class TestStructureIsPreserved:
         """A one-voxel-thick sheet is the easiest thing to smooth away."""
         a = np.zeros((20, 20, 20), np.uint32)
         a[10, 4:16, 4:16] = 1
-        mesh = serra.Mesher(relaxation=k).mesh(a, close=True).get(1)
+        mesh = serra_mesh.Mesher(relaxation=k).mesh(a, close=True).get(1)
         assert mesh.volume() > 0, "sheet collapsed or inverted"
         assert_valid_closed_surface(mesh, expected_euler=2)
 
@@ -106,9 +106,14 @@ class TestDeviationBound:
     """`max_deviation` is the guarantee that the surface tracks the data."""
 
     def _max_per_axis_shift(self, mask, k, max_deviation):
-        base = serra.Mesher().mesh(mask, close=True).get(1).vertices.astype(np.float64)
+        base = (
+            serra_mesh.Mesher()
+            .mesh(mask, close=True)
+            .get(1)
+            .vertices.astype(np.float64)
+        )
         moved = (
-            serra.Mesher(relaxation=k, max_deviation=max_deviation)
+            serra_mesh.Mesher(relaxation=k, max_deviation=max_deviation)
             .mesh(mask, close=True)
             .get(1)
             .vertices.astype(np.float64)
@@ -142,7 +147,7 @@ class TestDeviationBound:
 
     def test_zero_deviation_pins_everything(self, sphere):
         mask, _ = sphere
-        plain = serra.Mesher().mesh(mask, close=True).get(1)
+        plain = serra_mesh.Mesher().mesh(mask, close=True).get(1)
         frozen = relaxed(mask, 25, max_deviation=0.0)
         np.testing.assert_array_equal(plain.vertices, frozen.vertices)
 
@@ -150,19 +155,19 @@ class TestDeviationBound:
 class TestValidation:
     def test_negative_iterations_rejected(self):
         with pytest.raises(ValueError, match="non-negative"):
-            serra.Mesher(relaxation=-1)
+            serra_mesh.Mesher(relaxation=-1)
 
     def test_negative_deviation_rejected(self):
         with pytest.raises(ValueError, match="finite and non-negative"):
-            serra.Mesher(max_deviation=-0.1)
+            serra_mesh.Mesher(max_deviation=-0.1)
 
     @pytest.mark.parametrize("step", [0.0, -0.5, 1.5, float("nan")])
     def test_step_outside_the_unit_interval_rejected(self, step):
         with pytest.raises(ValueError, match=r"\(0, 1\]"):
-            serra.Mesher(relaxation=1, relaxation_step=step)
+            serra_mesh.Mesher(relaxation=1, relaxation_step=step)
 
     def test_repr_mentions_relaxation(self):
-        assert "relaxation=3" in repr(serra.Mesher(relaxation=3))
+        assert "relaxation=3" in repr(serra_mesh.Mesher(relaxation=3))
 
 
 class TestDeterminism:

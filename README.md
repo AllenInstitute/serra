@@ -8,10 +8,14 @@ built for connectomics-scale data, where a single chunk may contain hundreds of
 thousands of distinct objects, so it makes **one pass over the volume** regardless of
 how many labels are present.
 
-```python
-import serra
+```bash
+pip install serra-mesh
+```
 
-mesher = serra.Mesher(voxel_resolution=[4, 4, 40])
+```python
+import serra_mesh
+
+mesher = serra_mesh.Mesher(voxel_resolution=[4, 4, 40])
 mesher.mesh(cutout)          # a 3-D array of integer labels
 mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 ```
@@ -115,9 +119,9 @@ python bench/compare_zmesh.py zmesh
 ### Controlling parallelism
 
 ```python
-serra.Mesher(threads=0)   # default: every core
-serra.Mesher(threads=1)   # fully sequential
-serra.Mesher(threads=4)   # exactly four
+serra_mesh.Mesher(threads=0)   # default: every core
+serra_mesh.Mesher(threads=1)   # fully sequential
+serra_mesh.Mesher(threads=4)   # exactly four
 ```
 
 **Set `threads=1` if you are already parallelising at a higher level** — one
@@ -164,6 +168,14 @@ from that chunk's own array alone, whatever `k` is.
 The trade-off is deliberate: a chunk's interior smooths slightly more than the
 band around its seams, so a stitched surface is self-consistent and watertight,
 but not identical to the same volume meshed in one piece.
+
+## Naming
+
+The distribution is `serra-mesh` and the module is `serra_mesh`, because the
+name `serra` on PyPI belongs to an unrelated data-pipelines package that also
+ships a top-level `serra` module. Sharing the import name would risk one
+install silently overwriting the other, since pip does not detect file
+conflicts between distributions. The project itself is still serra.
 
 ## Status
 

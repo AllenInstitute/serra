@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "serra"
+name = "serra-mesh"
 version = "0.0.1"
 description = "Analytical multi-material meshes from voxelized segmentations"
 readme = "README.md"
@@ -25,7 +25,7 @@ Documentation = "https://alleninstitute.github.io/serra/"
 
 [tool.maturin]
 python-source = "python"
-module-name = "serra._serra"
+module-name = "serra_mesh._serra_mesh"
 
 [dependency-groups]
 dev = ["pytest", "pytest-cov", "ipykernel", "bump-my-version", "maturin"]

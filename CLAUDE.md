@@ -28,15 +28,21 @@ You should research and consult multiple computer graphics literature searches a
 
 The library should have facilities for producing meshes of varying resolutions, and downsampling meshes from their current state to lower counts of vertices and faces.  This will be used to make multi-resolution versions of meshes.  The downsampling procedures should make it possible to export map of the lower resolution mesh vertices to the higher resolution mesh vertices in order to analytically map the meshes between levels. 
 
-## api 
+## api
+
+Note: the PyPI distribution is `serra-mesh` and the module is `serra_mesh`.
+The name `serra` was already taken on PyPI by an unrelated package that ships
+its own top-level `serra` module, so sharing the import name risked one
+install silently clobbering the other.
+
 The api should be something like
 
 ```
-import serra
+import serra_mesh
 
 # assume i have a X,Y,Z array called cutout
 
-mesher=serra.Mesher(voxel_resolution=[4,4,40])
+mesher=serra_mesh.Mesher(voxel_resolution=[4,4,40])
 mesher.mesh(cutout)
 mesh=mesher.get(504)
 # mesh.vertices and mesh.faces contain the numpy arrays of object 504

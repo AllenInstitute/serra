@@ -63,4 +63,4 @@ jobs:
       # Proves the abi3 claim: a wheel built on one Python must import on the
       # oldest supported one.
       - run: pip install numpy dist/*.whl
-      - run: python -c "import serra, numpy as np; a=np.zeros((8,8,8),np.uint32); a[2:6,2:6,2:6]=1; m=serra.Mesher().mesh(a, close=True).get(1); assert m.is_closed(); print('ok', serra.__version__, len(m.faces), 'faces')"
+      - run: python -c "import serra_mesh, numpy as np; a=np.zeros((8,8,8),np.uint32); a[2:6,2:6,2:6]=1; m=serra_mesh.Mesher().mesh(a, close=True).get(1); assert m.is_closed(); print('ok', serra_mesh.__version__, len(m.faces), 'faces')"

@@ -21,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import serra
+import serra_mesh
 
 # Chunk A owns voxels [0, SPLIT); chunk B owns [SPLIT, size).
 SPLIT = 32
@@ -54,7 +54,7 @@ def blobs_volume(size=64, cross=28):
 
 def meshed_vertices(array, axis, offset, label):
     """Vertices of one object, shifted back into global coordinates."""
-    mesher = serra.Mesher().mesh(array, close=False)
+    mesher = serra_mesh.Mesher().mesh(array, close=False)
     if label not in mesher:
         return np.zeros((0, 3), np.float64)
     v = mesher.get(label).vertices.astype(np.float64).copy()
@@ -207,7 +207,7 @@ class TestSeamIndependenceFromContext:
 
 def relaxed_seam(chunk, offset, k, axis=0):
     """Seam-band vertices of a chunk meshed with `k` relaxation iterations."""
-    mesher = serra.Mesher(relaxation=k).mesh(chunk, close=False)
+    mesher = serra_mesh.Mesher(relaxation=k).mesh(chunk, close=False)
     if 1 not in mesher:
         return np.zeros((0, 3), np.int64)
     v = mesher.get(1).vertices.astype(np.float64).copy()
@@ -254,12 +254,14 @@ class TestSeamsUnderRelaxation:
         """
         array = tube_volume()
         a_chunk, _, _ = split_with_halo(array, 0, halo=1)
-        baseline = serra.Mesher(relaxation=k).mesh(a_chunk, close=False).get(1)
+        baseline = serra_mesh.Mesher(relaxation=k).mesh(a_chunk, close=False).get(1)
 
         noisy = array.copy()
         noisy[SPLIT + 4 : SPLIT + 14, 3:12, 3:12] = 99
         noisy_chunk, _, _ = split_with_halo(noisy, 0, halo=1)
-        perturbed = serra.Mesher(relaxation=k).mesh(noisy_chunk, close=False).get(1)
+        perturbed = (
+            serra_mesh.Mesher(relaxation=k).mesh(noisy_chunk, close=False).get(1)
+        )
 
         np.testing.assert_array_equal(baseline.vertices, perturbed.vertices)
         np.testing.assert_array_equal(baseline.faces, perturbed.faces)
@@ -271,8 +273,8 @@ class TestSeamsUnderRelaxation:
         """
         array = tube_volume()
         a_chunk, _, _ = split_with_halo(array, 0, halo=1)
-        plain = serra.Mesher(relaxation=0).mesh(a_chunk, close=False).get(1)
-        smooth = serra.Mesher(relaxation=10).mesh(a_chunk, close=False).get(1)
+        plain = serra_mesh.Mesher(relaxation=0).mesh(a_chunk, close=False).get(1)
+        smooth = serra_mesh.Mesher(relaxation=10).mesh(a_chunk, close=False).get(1)
         # Same connectivity, but the surface is measurably smaller in area.
         assert smooth.area() < plain.area() * 0.99
 

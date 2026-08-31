@@ -3,14 +3,14 @@
 Turns a 3-D array of integer labels into one triangle mesh per label, in a
 single pass over the volume.
 
-    >>> import serra
-    >>> mesher = serra.Mesher(voxel_resolution=[4, 4, 40])
+    >>> import serra_mesh
+    >>> mesher = serra_mesh.Mesher(voxel_resolution=[4, 4, 40])
     >>> mesher.mesh(cutout)                    # doctest: +SKIP
-    >>> mesh = serra.Mesher().get(504)         # doctest: +SKIP
+    >>> mesh = serra_mesh.Mesher().get(504)         # doctest: +SKIP
 """
 
-from serra._serra import __version__
-from serra.mesh import Mesh
-from serra.mesher import Mesher
+from serra_mesh._serra_mesh import __version__
+from serra_mesh.mesh import Mesh
+from serra_mesh.mesher import Mesher
 
 __all__ = ["Mesher", "Mesh", "__version__"]
