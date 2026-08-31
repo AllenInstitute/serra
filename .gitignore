@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+*.so
+*.pyd
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+site/
+.DS_Store

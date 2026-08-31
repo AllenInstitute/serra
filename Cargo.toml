@@ -1,0 +1,35 @@
+[package]
+name = "serra"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+description = "Analytical multi-material meshes from voxelized segmentations"
+repository = "https://github.com/fcollman/serra"
+readme = "README.md"
+
+[lib]
+name = "_serra"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py39"] }
+# `numpy` here is the rust-numpy crate (PyO3 bindings to the NumPy C-API), whose
+# version tracks pyo3's — not the Python numpy package. That one is pinned in
+# pyproject.toml as numpy>=1.21.
+numpy = "0.29"
+rayon = "1.12"
+rustc-hash = "2.1"
+
+[features]
+# maturin builds with default features (linking against the Python extension ABI);
+# `cargo test --no-default-features` builds a normal rlib that links libpython so
+# the pure-Rust unit tests can run.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+# Note: panics must unwind so PyO3 can turn them into Python exceptions,
+# so this profile deliberately does not set panic = "abort".
+[profile.release]
+lto = "thin"
+codegen-units = 1
