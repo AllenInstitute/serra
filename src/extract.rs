@@ -46,11 +46,58 @@ const NO_VERTEX: u32 = u32::MAX;
 /// points along `+a`, which is out of the object occupying the lower voxel.
 const RING: [(usize, usize); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
 
+/// What every label present in a cell shares.
+///
+/// A cell's vertex position is a pure function of its eight corner labels, so
+/// every label there receives the identical value — today each gets its own
+/// copy, and fairing then moves the copies apart. Recording the cell once, and
+/// pointing at it, is what lets fairing happen where Frisken (2022) puts it:
+/// on the cell, shared by up to eight materials at once.
+///
+/// One entry per *boundary* cell, in scan order, so [`CellField::linear`] is
+/// ascending and a cell's six face neighbours can be found by index arithmetic
+/// rather than by storing an adjacency.
+#[derive(Default, Clone)]
+pub struct CellField {
+    /// Vertex position in 1/256-voxel units, absolute in sample-index space.
+    pub positions: Vec<[i32; 3]>,
+    /// Index into the global cell grid, `(cz * nc[1] + cy) * nc[0] + cx`.
+    pub linear: Vec<u32>,
+    /// The cell's 12-bit crossing mask.
+    ///
+    /// Everything fairing needs derives from this: which faces carry a surface
+    /// ([`crate::tables::SURFACE_FACES`]), which are junctions
+    /// ([`crate::tables::JUNCTION_FACES`]), and the placed position the
+    /// displacement bound is measured against ([`crate::tables::CENTROID`]).
+    /// Storing the mask rather than the derived values keeps the record small
+    /// and the anchor exact.
+    pub crossings: Vec<u16>,
+    /// Cells in the volume's outermost layer, which fairing must not move.
+    pub pinned: Vec<bool>,
+}
+
+impl CellField {
+    fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    fn append(&mut self, other: &CellField) {
+        self.positions.extend_from_slice(&other.positions);
+        self.linear.extend_from_slice(&other.linear);
+        self.crossings.extend_from_slice(&other.crossings);
+        self.pinned.extend_from_slice(&other.pinned);
+    }
+}
+
 /// One label's raw surface, still in fixed-point index space.
 #[derive(Default, Clone)]
 pub struct LabelMesh {
     /// Vertex positions in 1/256-voxel units, absolute in sample-index space.
     pub positions: Vec<[i32; 3]>,
+    /// Parallel to `positions`: which [`CellField`] entry each vertex came
+    /// from. Several vertices share a cell — one per label present, and one per
+    /// surface sheet within a label — and all of them hold the same position.
+    pub cells: Vec<u32>,
     /// Quads as indices into `positions`, wound so normals point outward.
     pub quads: Vec<[u32; 4]>,
     /// Vertices that came from a cell with an ambiguous face, and so are the
@@ -127,6 +174,8 @@ pub struct Extraction {
     pub labels: Vec<u64>,
     /// Per-label surfaces, parallel to `labels`.
     pub meshes: Vec<LabelMesh>,
+    /// The cells those surfaces were built from, shared across labels.
+    pub cells: CellField,
 }
 
 impl Extraction {
@@ -253,6 +302,7 @@ pub fn extract_parallel<T: Label + Sync>(
         return Extraction {
             labels: Vec::new(),
             meshes: Vec::new(),
+            cells: CellField::default(),
         };
     }
 
@@ -299,6 +349,7 @@ struct Band {
     /// Ascending label ids, parallel to `meshes`.
     labels: Vec<u64>,
     meshes: Vec<LabelMesh>,
+    cells: CellField,
     /// Cell layer at `start`, needed by the seam below this band.
     first: Slab,
     /// Cell layer at `end - 1`, needed by the seam above this band.
@@ -318,6 +369,7 @@ fn extract_band<T: Label>(
     let plane = nc[0] * nc[1];
     let mut label_index: FxHashMap<u64, u32> = FxHashMap::default();
     let mut meshes: Vec<LabelMesh> = Vec::new();
+    let mut cells = CellField::default();
 
     // Only the current and previous cell layer are ever needed.
     let mut prev = Slab::new(plane);
@@ -354,7 +406,19 @@ fn extract_band<T: Label>(
                         || cx + 1 == nc[0]
                         || cy + 1 == nc[1]
                         || cz + 1 == nc[2]);
-                let position = cell_vertex(origin, crossing_mask(&corners));
+                let crossings = crossing_mask(&corners);
+                let position = cell_vertex(origin, crossings);
+
+                // One entry per boundary cell, before any label is considered.
+                // Non-uniform means at least two distinct corner values, at most
+                // one of which is background, so every entry is referenced by at
+                // least one vertex.
+                let cell = cells.len() as u32;
+                cells.positions.push(position);
+                cells.linear.push(((cz * nc[1] + cy) * nc[0] + cx) as u32);
+                cells.crossings.push(crossings);
+                cells.pinned.push(on_boundary);
+
                 let mut edge_vertex: EdgeVertices = [NO_VERTEX; 2 * NEDGES];
                 let mut handled = [false; 8];
 
@@ -383,6 +447,7 @@ fn extract_band<T: Label>(
                     // cell's position.
                     for n in 0..SURFACE.sheets[mask] {
                         mesh.positions.push(position);
+                        mesh.cells.push(cell);
                         if opts.mark_boundary {
                             mesh.pinned.push(on_boundary);
                         }
@@ -490,6 +555,7 @@ fn extract_band<T: Label>(
     Band {
         labels,
         meshes,
+        cells,
         first,
         last,
         start,
@@ -526,6 +592,7 @@ fn finish_single(band: Band) -> Extraction {
     Extraction {
         labels: band.labels,
         meshes: band.meshes,
+        cells: band.cells,
     }
 }
 
@@ -564,7 +631,16 @@ fn merge<T: Label + Sync>(
     // block starts so quad indices can be shifted onto it.
     let mut offsets: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
     let mut local_of: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
+    let mut cells = CellField::default();
     for band in bands.iter_mut() {
+        // Bands partition z and cells are visited in scan order, so appending
+        // band by band leaves `linear` globally ascending — which is what lets
+        // the fairing pass find face neighbours by index arithmetic.
+        let cell_base = cells.len() as u32;
+        let band_cells = std::mem::take(&mut band.cells);
+        cells.append(&band_cells);
+        drop(band_cells);
+
         let mut per_label = Vec::with_capacity(band.labels.len());
         let mut lookup = vec![u32::MAX; count];
         for (local, &label) in band.labels.iter().enumerate() {
@@ -582,6 +658,12 @@ fn merge<T: Label + Sync>(
             drop(positions);
             let pinned = std::mem::take(&mut band.meshes[local].pinned);
             target.pinned.extend_from_slice(&pinned);
+            // Unlike `suspects`, these are shifted onto the merged cell field
+            // rather than onto the label's own vertex block.
+            let band_cell_ids = std::mem::take(&mut band.meshes[local].cells);
+            target
+                .cells
+                .extend(band_cell_ids.into_iter().map(|c| c + cell_base));
             let suspects = std::mem::take(&mut band.meshes[local].suspects);
             target
                 .suspects
@@ -628,6 +710,7 @@ fn merge<T: Label + Sync>(
     Extraction {
         labels: all,
         meshes,
+        cells,
     }
 }
 
@@ -753,6 +836,123 @@ mod tests {
 
     fn view_of(a: &Array3<u32>, close: bool) -> VolumeView<'_, u32> {
         VolumeView::new(a.view(), close)
+    }
+
+    /// Three labels packed together so cells carry two and three materials, and
+    /// the object runs to the array edge so some cells are pinned.
+    fn three_materials(n: usize) -> Array3<u32> {
+        Array3::from_shape_fn((n, n, n), |(x, y, z)| {
+            let c = (n - 1) as f64 / 2.0;
+            let r =
+                ((x as f64 - c).powi(2) + (y as f64 - c).powi(2) + (z as f64 - c).powi(2)).sqrt();
+            if r > c * 0.85 {
+                0
+            } else if z * 3 < n {
+                1
+            } else if z * 3 < 2 * n {
+                2
+            } else {
+                3
+            }
+        })
+    }
+
+    /// Every vertex must point at a cell holding the identical position.
+    ///
+    /// This is the invariant the whole cell-domain design rests on: if it holds,
+    /// fairing the cell and scattering back is indistinguishable from fairing
+    /// each copy, except that the copies can no longer disagree.
+    fn assert_cells_agree(e: &Extraction) {
+        let n = e.cells.len();
+        assert_eq!(e.cells.linear.len(), n);
+        assert_eq!(e.cells.crossings.len(), n);
+        assert_eq!(e.cells.pinned.len(), n);
+
+        // Scan order, band-concatenated, must leave this strictly ascending —
+        // the fairing pass finds face neighbours by walking it.
+        for w in e.cells.linear.windows(2) {
+            assert!(w[0] < w[1], "cell linear index not ascending: {w:?}");
+        }
+
+        let mut referenced = vec![false; n];
+        for (mesh, label) in e.meshes.iter().zip(e.labels.iter()) {
+            assert_eq!(
+                mesh.cells.len(),
+                mesh.positions.len(),
+                "label {label}: cells not parallel to positions"
+            );
+            for (i, (&cell, &position)) in mesh.cells.iter().zip(mesh.positions.iter()).enumerate()
+            {
+                assert_eq!(
+                    e.cells.positions[cell as usize], position,
+                    "label {label} vertex {i} disagrees with its cell"
+                );
+                referenced[cell as usize] = true;
+            }
+        }
+        assert!(
+            referenced.iter().all(|&r| r),
+            "{} cells carry no vertex",
+            referenced.iter().filter(|&&r| !r).count()
+        );
+    }
+
+    #[test]
+    fn every_vertex_agrees_with_its_cell() {
+        let a = three_materials(24);
+        for close in [false, true] {
+            let opts = ExtractOptions {
+                mark_boundary: true,
+                ..Default::default()
+            };
+            assert_cells_agree(&extract_with(&view_of(&a, close), &opts));
+        }
+    }
+
+    /// The merge shifts each band's cell ids onto the concatenated field, so the
+    /// invariant has to survive every band count, not just one.
+    #[test]
+    fn cells_survive_the_band_merge() {
+        let a = three_materials(24);
+        let opts = ExtractOptions {
+            mark_boundary: true,
+            ..Default::default()
+        };
+        let single = extract_with(&view_of(&a, false), &opts);
+        for threads in [1, 2, 3, 4, 8] {
+            let many = extract_parallel(&view_of(&a, false), &opts, threads);
+            assert_cells_agree(&many);
+            assert_eq!(
+                many.cells.positions, single.cells.positions,
+                "{threads} threads changed the cell field"
+            );
+            assert_eq!(many.cells.linear, single.cells.linear);
+            assert_eq!(many.cells.crossings, single.cells.crossings);
+            for (m, s) in many.meshes.iter().zip(single.meshes.iter()) {
+                assert_eq!(m.cells, s.cells, "{threads} threads changed cell ids");
+            }
+        }
+    }
+
+    /// A cell where three materials meet must be flagged; a plain wall must not.
+    #[test]
+    fn junction_cells_are_recognised() {
+        let a = three_materials(24);
+        let e = extract_with(&view_of(&a, false), &ExtractOptions::default());
+        let junctions = e
+            .cells
+            .crossings
+            .iter()
+            .filter(|&&c| crate::place::is_edge_vertex(c))
+            .count();
+        assert!(
+            junctions > 0,
+            "no junction cells in a three-material volume"
+        );
+        assert!(
+            junctions < e.cells.len(),
+            "every cell classed as a junction, which cannot be right"
+        );
     }
 
     /// Every undirected edge of a closed surface must be used exactly twice.
