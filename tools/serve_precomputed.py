@@ -41,6 +41,14 @@ class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, fmt, *a):
+        # Neuroglancer asks for <mesh>/info to find out whether a mesh source is
+        # the multi-resolution format. There is no such file here, and the 404
+        # is how it learns to read the legacy single-resolution one instead --
+        # so it is the protocol working, not a fault. Creating the file to
+        # silence it would switch Neuroglancer into multi-resolution mode and
+        # break the meshes.
+        if self.path.endswith("/mesh/info"):
+            return
         if self.path.endswith("info") or "404" in (fmt % a):
             super().log_message(fmt, *a)
 
@@ -97,10 +105,19 @@ def main() -> int:
         print(f"no such directory: {root}\nRun tools/export_precomputed.py first.")
         return 1
 
+    # The request log goes to stderr unbuffered while these notes go to stdout,
+    # so without this the banner disappears the moment the output is piped and
+    # only the log survives.
+    sys.stdout.reconfigure(line_buffering=True)
+
     handler = functools.partial(CORSRequestHandler, directory=root)
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("127.0.0.1", args.port), handler) as httpd:
         print(f"serving {root} on http://localhost:{args.port} (CORS open)\n")
+        print(
+            "  (a 404 on <layer>/mesh/info is expected: it is how Neuroglancer\n"
+            "   detects that these are legacy single-resolution meshes)\n"
+        )
         for name in sorted(os.listdir(root)):
             if os.path.isfile(os.path.join(root, name, "info")):
                 print(f"  precomputed://http://localhost:{args.port}/{name}")
