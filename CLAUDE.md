@@ -70,4 +70,20 @@ To test this you should use a robust winding number approach to measure whether 
 Also, there should be a series of tests on meshing objects of known geomteric represetnations, tubes, spheres, etc, where the analytical calculation of the volume, area and normal directions should be known, and the empirically measured volume, area and normal directions should be close to the analytical values. 
 
 ## repo organization
-the repository should be logically organized in appropriate modules and the code well commented and documented, starting at a high level for users of the library, with more detailed developer guides for how the code is organized. 
+the repository should be logically organized in appropriate modules and the code well commented and documented, starting at a high level for users of the library, with more detailed developer guides for how the code is organized.
+
+## working on this code
+
+`cargo fmt` and `ruff format` both run here, and both reflow code — collapsing a
+multi-line `use` or condition onto one line, or splitting a call across lines.
+That has repeatedly broken scripted edits: a `str.replace` whose pattern no
+longer matches writes the file back unchanged and reports success.
+
+So: **never patch a file with a string replace that can silently match nothing.**
+Assert the pattern was found, and assert the count when several sites must
+change. After running a formatter, re-read any file before matching against it.
+
+The worst case is not a compile error. When `owns_quad`'s ownership gate was
+patched at one of two call sites, the result still compiled and still produced
+plausible meshes — it just produced a different number of faces depending on the
+thread count, which only the determinism test caught.
