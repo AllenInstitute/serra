@@ -162,6 +162,26 @@ Read the columns together. Relaxation is far more efficient at buying normals �
 `relaxation=10` the area error has gone *negative*: the sphere is now smaller
 than the data says. Taubin's volume error moves the other way, towards zero.
 
+### What it looks like
+
+A 5 µm cutout of dendrite `864691136144674612` at 32×32×40 nm, one camera, flat
+shaded so individual triangles stay visible. VTK's Nuttall window is included at
+a matched pass count — one VTK iteration is one pass, one serra iteration is two
+— since Nuttall is the window VTK added specifically to stop the shrinkage the
+older Hamming window causes.
+
+![smoothing filters compared](images/smoothing_864691136144674612.png)
+
+| | area / unsmoothed | mean dihedral |
+| --- | --- | --- |
+| no smoothing | 100.0% | 17.9° |
+| vtk nuttall, 20 passes | 93.8% | 9.8° |
+| `serra taubin=10`, 20 passes | 93.9% | 9.9° |
+| `serra taubin=20`, 40 passes | 93.2% | 8.5° |
+
+At equal passes the built-in filter and Nuttall are indistinguishable, by the
+numbers and by eye. The difference is that the built-in one can be run per chunk.
+
 ### On real neuropil, which is what settles it
 
 A sphere has almost no surface to lose. A 200 nm spine neck does. 24 objects
