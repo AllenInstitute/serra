@@ -18,8 +18,8 @@ use crate::extract::{extract_parallel, ExtractOptions, Extraction};
 use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
-use crate::place::{relax, Relaxation};
 use crate::simplify::{simplify, SimplifyOptions};
+use crate::smooth::{fair, scatter, smooth_with, Fairing, Relaxation, Scratch, Smoothing, Taubin};
 
 /// Arrays handed back for one object: vertices, faces, and optionally normals.
 type MeshArrays<'py> = (
@@ -33,7 +33,7 @@ type MeshArrays<'py> = (
 pub struct Mesher {
     resolution: [f64; 3],
     layout: Layout,
-    relaxation: Relaxation,
+    smoothing: Smoothing,
     threads: usize,
     /// A private pool, so a thread count set here cannot be overridden by
     /// RAYON_NUM_THREADS and cannot disturb other rayon users in the process.
@@ -47,7 +47,7 @@ fn run<'py, T: Label + numpy::Element>(
     py: Python<'py>,
     array: PyReadonlyArray3<'py, T>,
     close: bool,
-    relaxation: Relaxation,
+    smoothing: Smoothing,
     threads: usize,
     pool: Option<&rayon::ThreadPool>,
     owned_cells: Option<[usize; 3]>,
@@ -56,12 +56,12 @@ fn run<'py, T: Label + numpy::Element>(
     let s = view.shape();
     let shape = [s[0], s[1], s[2]];
 
-    // Relaxation must not move vertices whose one-ring the chunk does not
+    // Smoothing must not move vertices whose one-ring the chunk does not
     // fully contain, so the outermost layer of cells is pinned. With `close`
     // there is nothing beyond that layer to be missing, so nothing is pinned
     // and the whole surface is free to smooth.
     let options = ExtractOptions {
-        mark_boundary: relaxation.iterations > 0 && !close,
+        mark_boundary: smoothing.is_active() && (!close || owned_cells.is_some()),
         owned_cells,
     };
 
@@ -69,19 +69,44 @@ fn run<'py, T: Label + numpy::Element>(
     // spells this `detach`) and other threads can run.
     let work = move || {
         let mut extraction = extract_parallel(&VolumeView::new(view, close), &options, threads);
-        if relaxation.iterations > 0 {
+        if smoothing.is_cell_domain() {
+            // One pass over the shared cell field, then every vertex reads its
+            // cell. Both copies of a wall become the same number, so they cannot
+            // disagree however many iterations run.
+            if let Smoothing::Fairing(params) = smoothing {
+                fair(&mut extraction.cells, &params, threads != 1);
+            }
+            let cells = &extraction.cells;
             if threads == 1 {
                 for mesh in extraction.meshes.iter_mut() {
-                    relax(mesh, &relaxation);
+                    scatter(cells, mesh);
                 }
             } else {
-                // Each object's surface is a separate graph, so relaxation is
+                extraction
+                    .meshes
+                    .par_iter_mut()
+                    .for_each(|mesh| scatter(cells, mesh));
+            }
+        } else if smoothing.is_active() {
+            // One scratch buffer per worker, carried across every mesh that
+            // worker handles. Smoothing a chunk means smoothing thousands of
+            // surfaces, and allocating the adjacency afresh for each one costs
+            // more than the arithmetic does.
+            if threads == 1 {
+                let mut scratch = Scratch::default();
+                for mesh in extraction.meshes.iter_mut() {
+                    smooth_with(mesh, &smoothing, &mut scratch);
+                }
+            } else {
+                // Each object's surface is a separate graph, so smoothing is
                 // embarrassingly parallel and cannot depend on scheduling: a
                 // mesh is only ever touched by the worker that owns it.
                 extraction
                     .meshes
                     .par_iter_mut()
-                    .for_each(|mesh| relax(mesh, &relaxation));
+                    .for_each_init(Scratch::default, |scratch, mesh| {
+                        smooth_with(mesh, &smoothing, scratch)
+                    });
             }
         }
         extraction
@@ -104,8 +129,18 @@ impl Mesher {
         relaxation=0,
         max_deviation=0.5,
         relaxation_step=0.5,
+        taubin=0,
+        taubin_pass_band=0.1,
+        taubin_lambda=0.63,
+        fairing=0,
+        fairing_step=0.5,
+        fairing_junction_rule=true,
+        fairing_taubin=false,
+        fairing_pass_band=0.1,
+        fairing_lambda=0.63,
         threads=0,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         voxel_resolution: Vec<f64>,
         axis_order: &str,
@@ -113,6 +148,15 @@ impl Mesher {
         relaxation: u32,
         max_deviation: f64,
         relaxation_step: f64,
+        taubin: u32,
+        taubin_pass_band: f64,
+        taubin_lambda: f64,
+        fairing: u32,
+        fairing_step: f64,
+        fairing_junction_rule: bool,
+        fairing_taubin: bool,
+        fairing_pass_band: f64,
+        fairing_lambda: f64,
         threads: usize,
     ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
@@ -140,6 +184,58 @@ impl Mesher {
         if !relaxation_step.is_finite() || relaxation_step <= 0.0 || relaxation_step > 1.0 {
             return Err(PyValueError::new_err("relaxation_step must lie in (0, 1]"));
         }
+        // Two filters over the same vertices would be a compounding of bounds
+        // nobody could reason about, and the answer to "which one" is a
+        // decision, not a blend.
+        if [relaxation > 0, taubin > 0, fairing > 0]
+            .iter()
+            .filter(|&&on| on)
+            .count()
+            > 1
+        {
+            return Err(PyValueError::new_err(
+                "set only one of relaxation, taubin or fairing",
+            ));
+        }
+        if fairing > 0 && (!fairing_step.is_finite() || fairing_step <= 0.0 || fairing_step > 1.0) {
+            return Err(PyValueError::new_err("fairing_step must lie in (0, 1]"));
+        }
+        let taubin_params = Taubin {
+            iterations: taubin,
+            pass_band: taubin_pass_band,
+            lambda: taubin_lambda,
+            max_deviation,
+        };
+        if taubin > 0 && !taubin_params.is_valid() {
+            return Err(PyValueError::new_err(format!(
+                "taubin_pass_band and taubin_lambda must lie in (0, 1) and give a \
+                 negative mu larger in magnitude than lambda; got pass_band={taubin_pass_band}, \
+                 lambda={taubin_lambda}, mu={}",
+                taubin_params.mu()
+            )));
+        }
+        let smoothing = if fairing > 0 {
+            Smoothing::Fairing(Fairing {
+                iterations: fairing,
+                step: fairing_step,
+                max_deviation,
+                junction_rule: fairing_junction_rule,
+                pass_band: if fairing_taubin {
+                    Some(fairing_pass_band)
+                } else {
+                    None
+                },
+                lambda: fairing_lambda,
+            })
+        } else if taubin > 0 {
+            Smoothing::Taubin(taubin_params)
+        } else {
+            Smoothing::Laplacian(Relaxation {
+                iterations: relaxation,
+                max_deviation,
+                step: relaxation_step,
+            })
+        };
         // 0 means "use every core", which is rayon's global pool. Any other
         // value gets a private pool so the choice is honoured exactly.
         let pool = if threads > 1 {
@@ -161,11 +257,7 @@ impl Mesher {
             layout,
             threads,
             pool,
-            relaxation: Relaxation {
-                iterations: relaxation,
-                max_deviation,
-                step: relaxation_step,
-            },
+            smoothing,
             shape: [0; 3],
             extraction: None,
         })
@@ -206,7 +298,7 @@ impl Mesher {
                         py,
                         array,
                         close,
-                        self.relaxation,
+                        self.smoothing,
                         self.threads,
                         self.pool.as_deref(),
                         owned_cells,

@@ -31,15 +31,58 @@ class Mesher:
     y_down:
         Set for the image convention where Y increases downward.
     relaxation:
-        Iterations of constrained smoothing. Zero (the default) uses purely
-        local vertex placement. Raising it gives a smoother surface, more
-        accurate area and better normals, at some cost in speed.
+        Iterations of constrained Laplacian smoothing. Zero (the default) uses
+        purely local vertex placement. Raising it gives a smoother surface, more
+        accurate area and better normals, at some cost in speed. Mutually
+        exclusive with ``taubin``.
     max_deviation:
-        How far relaxation may move a vertex from where local placement put it,
+        How far smoothing may move a vertex from where local placement put it,
         in voxels. This bounds how far the surface can stray from the data and
-        stops smoothing from shrinking objects away.
+        stops smoothing from shrinking objects away. Applies to both filters.
     relaxation_step:
         Fraction of the way to the neighbour average per iteration, in (0, 1].
+    taubin:
+        Iterations of Taubin smoothing, each a shrinking pass followed by a
+        larger expanding one. Mutually exclusive with ``relaxation``, and
+        generally the better choice: Laplacian iteration is diffusion and drains
+        volume, whereas Taubin is a low-pass filter that leaves the shape's
+        low frequencies alone. It smooths considerably harder for the same
+        volume loss, at two passes per iteration rather than one.
+
+        Smoothing runs inside :meth:`mesh`, so a mesh is always smoothed
+        *before* :meth:`get` simplifies it — which is the order that measures
+        best. See ``bench/taubin.py``.
+    taubin_pass_band:
+        Graph frequency the filter leaves at unit gain, in (0, 1). Smaller
+        smooths more. The default of ``0.1`` matches VTK's convention.
+    fairing:
+        Sweeps of Frisken's surface fairing, which smooths in the **cell**
+        domain: one position per cell, shared by every label present there.
+        Mutually exclusive with ``relaxation`` and ``taubin``.
+
+        The reason to prefer it is correctness rather than smoothness. The other
+        two fair each label's mesh independently, so the two copies of a wall
+        between touching objects drift apart and the segmentation stops being a
+        partition of space. Here they are the same number and cannot disagree,
+        at any iteration count.
+    fairing_step:
+        Fraction of the way to the neighbour average per sweep, in (0, 1].
+    fairing_junction_rule:
+        Restrict cells where three or more labels meet to their junction
+        neighbours, so those vertices slide along the junction curve rather than
+        being pulled off it by the ordinary walls that also meet there.
+    fairing_taubin:
+        Alternate Taubin's shrink and unshrink steps instead of repeating
+        ``fairing_step``. The cell domain and the shrinkage are independent
+        problems: sharing a cell's vertex stops adjacent objects drifting apart
+        but does nothing about volume loss, because Frisken's fairing is a plain
+        Laplacian. Setting this fixes the second without giving up the first.
+    fairing_pass_band, fairing_lambda:
+        As ``taubin_pass_band`` and ``taubin_lambda``, for that pair.
+    taubin_lambda:
+        The positive step, in (0, 1). The negative step follows from this and
+        ``taubin_pass_band``; a pass band too wide for the chosen lambda is
+        rejected, because the filter would amplify rather than smooth.
     threads:
         How many threads to use. ``0`` (the default) uses every core; ``1``
         runs fully sequentially; any other value uses exactly that many.
@@ -64,8 +107,8 @@ class Mesher:
     leaves the dual cells along the seam unshared, and the surfaces will not
     meet.
 
-    One voxel of halo is enough at *any* ``relaxation`` setting. Relaxation
-    holds the outermost layer of cells fixed, so it never reads past the halo
+    The halo does not grow with the smoothing setting, for either filter. Both
+    hold the outermost layer of cells fixed, so neither ever reads past the halo
     and a chunk's mesh stays reproducible from that chunk's array alone. The
     trade-off is that a chunk's interior is smoothed slightly more than the band
     around its seams, so a stitched surface is self-consistent and watertight
@@ -87,6 +130,15 @@ class Mesher:
         relaxation: int = 0,
         max_deviation: float = 0.5,
         relaxation_step: float = 0.5,
+        taubin: int = 0,
+        taubin_pass_band: float = 0.1,
+        taubin_lambda: float = 0.63,
+        fairing: int = 0,
+        fairing_step: float = 0.5,
+        fairing_junction_rule: bool = True,
+        fairing_taubin: bool = False,
+        fairing_pass_band: float = 0.1,
+        fairing_lambda: float = 0.63,
         threads: int = 0,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
@@ -95,9 +147,22 @@ class Mesher:
         self.relaxation = int(relaxation)
         self.max_deviation = float(max_deviation)
         self.relaxation_step = float(relaxation_step)
+        self.taubin = int(taubin)
+        self.taubin_pass_band = float(taubin_pass_band)
+        self.taubin_lambda = float(taubin_lambda)
+        self.fairing = int(fairing)
+        self.fairing_step = float(fairing_step)
+        self.fairing_junction_rule = bool(fairing_junction_rule)
+        self.fairing_taubin = bool(fairing_taubin)
+        self.fairing_pass_band = float(fairing_pass_band)
+        self.fairing_lambda = float(fairing_lambda)
         self.threads = int(threads)
         if self.relaxation < 0:
             raise ValueError("relaxation must be non-negative")
+        if self.taubin < 0:
+            raise ValueError("taubin must be non-negative")
+        if self.fairing < 0:
+            raise ValueError("fairing must be non-negative")
         if self.threads < 0:
             raise ValueError("threads must be non-negative (0 means all cores)")
         self._inner = _serra_mesh.Mesher(
@@ -107,6 +172,15 @@ class Mesher:
             relaxation=self.relaxation,
             max_deviation=self.max_deviation,
             relaxation_step=self.relaxation_step,
+            taubin=self.taubin,
+            taubin_pass_band=self.taubin_pass_band,
+            taubin_lambda=self.taubin_lambda,
+            fairing=self.fairing,
+            fairing_step=self.fairing_step,
+            fairing_junction_rule=self.fairing_junction_rule,
+            fairing_taubin=self.fairing_taubin,
+            fairing_pass_band=self.fairing_pass_band,
+            fairing_lambda=self.fairing_lambda,
             threads=self.threads,
         )
 

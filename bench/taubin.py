@@ -7,13 +7,18 @@ whether Taubin adds anything on top, whether it can be run per chunk without
 breaking stitching, and in which order it should be composed with quadric
 simplification.
 
-Four experiments:
+Five experiments:
 
 1. Analytic shapes, where area, volume and every normal are known exactly.
 2. Seam preservation: smooth two chunks separately, then stitch.
 3. Order of operations against quadric simplification.
 4. Real neuropil, where the objects are thin processes rather than spheres,
    and where unconstrained smoothing has somewhere to go wrong.
+5. serra's own built-in filter (`Mesher(taubin=k)`) against all of the above --
+   what the measurements in 1-4 were used to justify building.
+6. The same filter on real neuropil, which is what settles the default.
+7. Whether a fixed iteration count transfers across object size, and what the
+   cost of smoothing per chunk actually is.
 
     uv sync --group bench
     python bench/taubin.py
@@ -509,6 +514,228 @@ def experiment_neuropil(zmesh_mod, serra_mesh, volume_array, labels):
     print(f"\n   ({len(interior)} closed objects)\n")
 
 
+def experiment_builtin(serra_mesh, radius=32):
+    """serra's own filter, against the post-hoc one and against relaxation."""
+    print("=" * 78)
+    print("5. The built-in filter: Mesher(taubin=k)")
+    print("=" * 78)
+    print(
+        "   lambda/mu Taubin in Rust, run inside mesh() with seam vertices"
+        " pinned and\n   the same max_deviation bound relaxation uses. Compare"
+        " the shape of the two\n   curves, not single rows: relaxation buys"
+        " normals with volume, Taubin does\n   not.\n"
+    )
+
+    mask = sphere_mask(radius)
+    centre = (mask.shape[0] - 1) / 2
+    exact_area = 4 * np.pi * radius**2
+    exact_volume = 4 / 3 * np.pi * radius**3
+
+    print(f"{'setting':>24} {'area err':>9} {'volume err':>11} {'normal err':>11}")
+    settings = [
+        ("no smoothing", {}),
+        ("relaxation=3", {"relaxation": 3}),
+        ("relaxation=10", {"relaxation": 10}),
+        ("relaxation=20", {"relaxation": 20}),
+        ("taubin=3", {"taubin": 3}),
+        ("taubin=10", {"taubin": 10}),
+        ("taubin=20", {"taubin": 20}),
+        ("taubin=40", {"taubin": 40}),
+    ]
+    for name, kwargs in settings:
+        mesher = serra_mesh.Mesher(voxel_resolution=[1.0, 1.0, 1.0], **kwargs)
+        mesh = mesher.mesh(mask, close=True).get(1)
+        v, f = mesh.vertices.astype(np.float64), mesh.faces
+        print(
+            f"{name:>24} "
+            f"{area(v, f) / exact_area - 1:>+8.2%} "
+            f"{volume(v, f) / exact_volume - 1:>+10.2%} "
+            f"{normal_error_degrees(v, f, lambda p: p - centre):>10.2f}d"
+        )
+
+    # And against the post-hoc VTK filter on the same surface, since that is
+    # what the earlier experiments measured.
+    plain = serra_mesh.Mesher(voxel_resolution=[1.0, 1.0, 1.0])
+    mesh = plain.mesh(mask, close=True).get(1)
+    sv, sf = taubin(mesh.vertices.astype(np.float64), mesh.faces)
+    print(
+        f"{'k=0 + vtk (20 iter)':>24} "
+        f"{area(sv, sf) / exact_area - 1:>+8.2%} "
+        f"{volume(sv, sf) / exact_volume - 1:>+10.2%} "
+        f"{normal_error_degrees(sv, sf, lambda p: p - centre):>10.2f}d"
+    )
+    print()
+
+
+def experiment_builtin_on_real_data(serra_mesh, volume_array, labels):
+    """Where it actually matters: thin processes, not spheres."""
+    print("=" * 78)
+    print("6. The built-in filter on real neuropil")
+    print("=" * 78)
+    print(
+        "   Voxel count is the truth, and only objects clear of the array faces"
+        " count,\n   since one running off the edge is closed by a cap rather"
+        " than by its own\n   surface. This is the table that decides the"
+        " default: a spine neck has a\n   surface-to-volume ratio a sphere does"
+        " not.\n"
+    )
+
+    voxel_volume = float(np.prod(RESOLUTION))
+    base = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION))
+    base.mesh(volume_array, close=True)
+    interior = [
+        (label, voxels)
+        for label, voxels in labels
+        if label in base and base.get(label).is_closed()
+    ]
+
+    print(f"{'setting':>24} {'volume / true':>14} {'area / unsmoothed':>18}")
+    baseline_area = None
+    for name, kwargs in [
+        ("no smoothing", {}),
+        ("relaxation=3", {"relaxation": 3}),
+        ("relaxation=10", {"relaxation": 10}),
+        ("taubin=3", {"taubin": 3}),
+        ("taubin=10", {"taubin": 10}),
+        ("taubin=20", {"taubin": 20}),
+    ]:
+        mesher = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION), **kwargs)
+        mesher.mesh(volume_array, close=True)
+        total_v = total_a = total_truth = 0.0
+        for label, voxels in interior:
+            got = mesher.get(label)
+            total_v += got.volume()
+            total_a += got.area()
+            total_truth += voxels * voxel_volume
+        if baseline_area is None:
+            baseline_area = total_a
+        print(
+            f"{name:>24} {total_v / total_truth:>13.2%} "
+            f"{total_a / baseline_area:>17.1%}"
+        )
+    print(f"\n   ({len(interior)} closed objects)\n")
+
+
+def experiment_scale(serra_mesh):
+    """Do fixed parameters mean the same thing on a big object as a small one?
+
+    Raised in issue #1, and the answer splits: convergence transfers, shrinkage
+    does not.
+    """
+    print("=" * 78)
+    print("7a. Does a fixed iteration count transfer across object size?")
+    print("=" * 78)
+    print(
+        "   Spheres from r=8 to r=64 -- a 65x range in vertex count -- with the"
+        " same\n   settings throughout. Normal error is what the filter is for;"
+        " area error is\n   what it costs.\n"
+    )
+
+    radii = [8, 16, 32, 64]
+    settings = [
+        ("no smoothing", {}),
+        ("relaxation=3", {"relaxation": 3}),
+        ("relaxation=10", {"relaxation": 10}),
+        ("taubin=10", {"taubin": 10}),
+        ("taubin=20", {"taubin": 20}),
+    ]
+
+    header = "".join(f"{'r=' + str(r):>18}" for r in radii)
+    print(f"{'setting':>16}{header}")
+    for name, kwargs in settings:
+        row = ""
+        for radius in radii:
+            mask = sphere_mask(radius)
+            centre = (mask.shape[0] - 1) / 2
+            mesher = serra_mesh.Mesher(voxel_resolution=[1.0, 1.0, 1.0], **kwargs)
+            mesh = mesher.mesh(mask, close=True).get(1)
+            v, f = mesh.vertices.astype(np.float64), mesh.faces
+            angle = normal_error_degrees(v, f, lambda p, c=centre: p - c)
+            row += f"{angle:>10.2f}d{area(v, f) / (4 * np.pi * radius**2) - 1:>+7.2%}"
+        print(f"{name:>16}{row}")
+
+    print(
+        "\n   Normal error is flat across the range, and structurally so: dual"
+        " contouring\n   puts one vertex per cell, so edge length is ~1 voxel"
+        " whatever the object's\n   size, and the staircase artefact sits in a"
+        " fixed band of graph frequency.\n   That would not hold on a decimated"
+        " mesh -- which is why smoothing belongs\n   before simplification, and"
+        " in serra structurally is.\n"
+    )
+    print(
+        "   Area error is *not* flat. Laplacian iteration removes a roughly"
+        " fixed depth\n   from every surface, so the relative cost goes as 1/r:"
+        " negligible on a cell\n   body, several percent on a small process."
+        " Taubin's is far flatter, which is\n   the argument for it.\n"
+    )
+
+
+def experiment_chunk_cost(serra_mesh, size=144, radius=60, halo=2):
+    """What smoothing per chunk costs, versus smoothing the assembled mesh."""
+    import itertools
+
+    print("=" * 78)
+    print("7b. The price of smoothing per chunk: the pinned ring at each seam")
+    print("=" * 78)
+    print(
+        "   Both filters hold the outermost cell layer fixed, so seam vertices"
+        " never move\n   and chunks still weld by exact equality. The cost is"
+        " that the ring around\n   each seam goes unsmoothed.\n"
+    )
+
+    g = np.indices((size, size, size))
+    c = (size - 1) / 2
+    volume_array = (
+        ((g[0] - c) ** 2 + (g[1] - c) ** 2 + (g[2] - c) ** 2) <= radius**2
+    ).astype(np.uint32)
+    whole = serra_mesh.Mesher(taubin=10).mesh(volume_array, close=False).get(1)
+
+    print(
+        f"{'chunk':>7} {'chunks':>7} {'seam verts':>11} {'pinned':>8} "
+        f"{'stitches':>9} {'faces ok':>9} {'median':>9} {'worst':>8}"
+    )
+    for chunk in (16, 24, 36, 48, 72):
+        pieces = []
+        for origin in itertools.product(*[range(0, size, chunk)] * 3):
+            window, owned = [], []
+            for k in range(3):
+                end = min(origin[k] + chunk, size)
+                owned.append(end - origin[k])
+                window.append(slice(origin[k], min(end + halo, size)))
+            mesher = serra_mesh.Mesher(taubin=10).mesh(
+                volume_array[tuple(window)], close=False, owned_shape=owned
+            )
+            if 1 in mesher:
+                pieces.append((mesher.get(1), np.array(origin, dtype=float)))
+
+        seen: dict[bytes, int] = {}
+        for mesh, offset in pieces:
+            shifted = np.ascontiguousarray(
+                mesh.vertices.astype(np.float64) + offset, dtype=np.float32
+            )
+            for row in shifted:
+                key = row.tobytes()
+                seen[key] = seen.get(key, 0) + 1
+        shared = sum(1 for n in seen.values() if n > 1)
+
+        joined = serra_mesh.stitch(pieces, dedup_faces=False)
+        d = distance_to(
+            (whole.vertices.astype(np.float64), whole.faces), joined.vertices
+        )
+        print(
+            f"{chunk:>7} {len(pieces):>7} {shared:>11,} {shared / len(seen):>7.1%} "
+            f"{str(joined.count_boundary_edges() == 0):>9} "
+            f"{str(len(joined.faces) == len(whole.faces)):>9} "
+            f"{np.median(d):>8.4f}v {d.max():>7.3f}v"
+        )
+    print(
+        "\n   The pinned fraction goes as surface-to-volume, so at a 256^3"
+        " chunk it is\n   under 1%. `median` and `worst` are distances from"
+        " where smoothing the whole\n   volume in one piece would have put the"
+        " surface.\n"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--volume", default="data/microns_neuropil.npy.gz")
@@ -526,12 +753,17 @@ def main() -> int:
 
     experiment_analytic(zmesh, serra_mesh)
     experiment_seams(serra_mesh)
+    experiment_builtin(serra_mesh)
 
     if not args.skip_real:
         volume_array = load(args.volume)
         labels = sample_labels(volume_array, args.objects, args.low, args.high)
         experiment_order(serra_mesh, volume_array, labels)
         experiment_neuropil(zmesh, serra_mesh, volume_array, labels)
+        experiment_builtin_on_real_data(serra_mesh, volume_array, labels)
+
+    experiment_scale(serra_mesh)
+    experiment_chunk_cost(serra_mesh)
     return 0
 
 

@@ -206,7 +206,7 @@ const fn build_edge_index() -> [[u8; 3]; NCORNERS] {
 }
 
 /// The six faces of the cube, as the four edges lying in each.
-const FACE_EDGES: [[u8; 4]; 6] = build_face_edges();
+pub const FACE_EDGES: [[u8; 4]; 6] = build_face_edges();
 
 const fn build_face_edges() -> [[u8; 4]; 6] {
     let mut out = [[0u8; 4]; 6];
@@ -286,6 +286,86 @@ const fn build_ambiguous() -> [bool; 256] {
             face += 1;
         }
         mask += 1;
+    }
+    out
+}
+
+/// Faces of a cell that carry any surface at all, as a bitmask over the 6
+/// faces, indexed by the 12-bit crossing mask.
+///
+/// A face with no crossing separates nothing: the two cells either side of it
+/// are not on a common sheet, and no quad joins them. Fairing must skip those
+/// neighbours. Averaging across them instead collapses a one-voxel sheet to
+/// zero thickness — the two sides are face-adjacent, so they meet in the middle
+/// — which no displacement bound prevents, because the sides start exactly one
+/// voxel apart.
+pub static SURFACE_FACES: [u8; 1 << NEDGES] = build_face_mask(2);
+
+/// Faces crossed by two or more surfaces: Frisken's *JunctionFace*, where three
+/// or more materials meet, or two meet on opposite diagonals.
+///
+/// A cell with one of these carries an *EdgeVertex*, which is faired against
+/// its junction neighbours alone so that it slides along the junction curve
+/// rather than being dragged off it by the ordinary walls that also meet there.
+pub static JUNCTION_FACES: [u8; 1 << NEDGES] = build_face_mask(3);
+
+/// Bit `f` set when face `f` has at least `threshold` of its four perimeter
+/// edges crossing.
+///
+/// The count is the whole classification. Around a face's four-cycle of edges,
+/// zero changes means one material, two means a single boundary, and three or
+/// four means two boundaries — either three materials, or two on opposite
+/// diagonals. Exactly one change is impossible: a cyclic sequence cannot return
+/// to itself after a single change. Verified against the corner-partition
+/// definition over all 4140 distinguishable cell labellings; see the tests.
+const fn build_face_mask(threshold: u32) -> [u8; 1 << NEDGES] {
+    let mut out = [0u8; 1 << NEDGES];
+    let mut mask = 0usize;
+    while mask < (1 << NEDGES) {
+        let mut face = 0;
+        while face < 6 {
+            let mut n = 0;
+            let mut k = 0;
+            while k < 4 {
+                if mask & (1 << FACE_EDGES[face][k]) != 0 {
+                    n += 1;
+                }
+                k += 1;
+            }
+            if n >= threshold {
+                out[mask] |= 1 << face;
+            }
+            face += 1;
+        }
+        mask += 1;
+    }
+    out
+}
+
+/// The four corners of each cell face, in cyclic order, so entries 0/2 and 1/3
+/// are the two diagonals. Ordered like [`crate::extract`]'s `RING`.
+///
+/// Only the tests use this: it expresses Frisken's classification directly, in
+/// terms of how many materials sit on the face, so the cheap crossing-mask form
+/// above can be checked against the definition rather than against itself.
+pub const FACE_CORNERS: [[u8; 4]; 6] = build_face_corners();
+
+const fn build_face_corners() -> [[u8; 4]; 6] {
+    const CYCLE: [(usize, usize); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
+    let mut out = [[0u8; 4]; 6];
+    let mut face = 0;
+    while face < 6 {
+        let axis = face / 2;
+        let value = face % 2;
+        let u = (axis + 1) % 3;
+        let w = (axis + 2) % 3;
+        let mut k = 0;
+        while k < 4 {
+            let (du, dv) = CYCLE[k];
+            out[face][k] = ((value << axis) | (du << u) | (dv << w)) as u8;
+            k += 1;
+        }
+        face += 1;
     }
     out
 }
@@ -563,6 +643,137 @@ mod surface_tests {
                 let (lo, hi) = if c < other { (c, other) } else { (other, c) };
                 assert_eq!((EDGES[e].0 as usize, EDGES[e].1 as usize), (lo, hi));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod face_kind_tests {
+    use super::*;
+
+    /// Frisken's classification stated directly: how many materials sit on the
+    /// face, and are two of them diagonally opposed.
+    fn from_corners(l: [u32; 4]) -> u32 {
+        let mut distinct = 0;
+        for i in 0..4 {
+            if (0..i).all(|j| l[j] != l[i]) {
+                distinct += 1;
+            }
+        }
+        let diagonal = l[0] == l[2] && l[1] == l[3] && l[0] != l[1];
+        if distinct == 1 {
+            0 // uniform
+        } else if distinct >= 3 || diagonal {
+            2 // junction
+        } else {
+            1 // surface
+        }
+    }
+
+    /// Every distinguishable labelling of a cell's 8 corners: the 4140 set
+    /// partitions, generated as restricted growth strings.
+    fn each_partition(mut f: impl FnMut(&[u32; NCORNERS])) {
+        fn rec(a: &mut [u32; NCORNERS], i: usize, max: i32, f: &mut impl FnMut(&[u32; 8])) {
+            if i == NCORNERS {
+                f(a);
+                return;
+            }
+            for v in 0..=(max + 1) {
+                a[i] = v as u32;
+                rec(a, i + 1, max.max(v), f);
+            }
+        }
+        let mut a = [0u32; NCORNERS];
+        rec(&mut a, 0, -1, &mut f);
+    }
+
+    fn crossings_of(corners: &[u32; NCORNERS]) -> usize {
+        let mut mask = 0usize;
+        for (e, &(a, b)) in EDGES.iter().enumerate() {
+            if corners[a as usize] != corners[b as usize] {
+                mask |= 1 << e;
+            }
+        }
+        mask
+    }
+
+    /// The crossing-mask tables must agree with the corner definition on every
+    /// configuration a cell can actually take.
+    #[test]
+    fn crossing_mask_classification_matches_the_definition() {
+        let mut seen = [0usize; 5];
+        let mut cells = 0;
+        each_partition(|corners| {
+            cells += 1;
+            let mask = crossings_of(corners);
+            for (f, face) in FACE_CORNERS.iter().enumerate() {
+                let want = from_corners([
+                    corners[face[0] as usize],
+                    corners[face[1] as usize],
+                    corners[face[2] as usize],
+                    corners[face[3] as usize],
+                ]);
+                let crossings = FACE_EDGES[f]
+                    .iter()
+                    .filter(|&&e| mask & (1 << e) != 0)
+                    .count();
+                seen[crossings] += 1;
+                let got = if SURFACE_FACES[mask] >> f & 1 == 0 {
+                    0
+                } else if JUNCTION_FACES[mask] >> f & 1 == 1 {
+                    2
+                } else {
+                    1
+                };
+                assert_eq!(got, want, "corners {corners:?} face {f}");
+            }
+        });
+        assert_eq!(cells, 4140, "set partitions of 8 corners");
+        // One crossing on a face is impossible: a cyclic sequence cannot return
+        // to itself after a single change. That is why "no crossings" and "some
+        // crossings" can be told apart by a threshold of 2.
+        assert_eq!(seen[1], 0, "a face with exactly one crossing occurred");
+        assert!(seen[0] > 0 && seen[2] > 0 && seen[3] > 0 && seen[4] > 0);
+    }
+
+    #[test]
+    fn junction_implies_surface() {
+        // A junction face is a face, so the stencil mask must be a superset.
+        for mask in 0..(1usize << NEDGES) {
+            assert_eq!(
+                JUNCTION_FACES[mask] & !SURFACE_FACES[mask],
+                0,
+                "mask {mask:#x} has a junction on a face with no surface"
+            );
+        }
+    }
+
+    #[test]
+    fn a_uniform_cell_has_no_faces_and_no_junction() {
+        assert_eq!(SURFACE_FACES[0], 0);
+        assert_eq!(JUNCTION_FACES[0], 0);
+    }
+
+    #[test]
+    fn face_corners_are_cyclic_and_cover_each_face() {
+        for (f, face) in FACE_CORNERS.iter().enumerate() {
+            let (axis, value) = (f / 2, f % 2);
+            let mut seen = [false; NCORNERS];
+            for &c in face {
+                assert_eq!(
+                    (c as usize >> axis) & 1,
+                    value,
+                    "face {f} corner {c} off-face"
+                );
+                assert!(!seen[c as usize], "face {f} repeats corner {c}");
+                seen[c as usize] = true;
+            }
+            for k in 0..4 {
+                let (a, b) = (face[k] as usize, face[(k + 1) % 4] as usize);
+                assert_eq!((a ^ b).count_ones(), 1, "face {f}: {a},{b} not an edge");
+            }
+            assert_eq!((face[0] ^ face[2]).count_ones(), 2);
+            assert_eq!((face[1] ^ face[3]).count_ones(), 2);
         }
     }
 }
