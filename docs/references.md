@@ -34,11 +34,16 @@ paper:
   materials are present. Its vertex splitting is a different mechanism, for a
   different purpose — keeping each label's own surface 2-manifold where its
   voxel set touches itself only diagonally.
-- **Fairing is per object, not per cell.** Frisken relaxes one position per
-  cell, shared by every label there. serra relaxes each label's mesh
-  independently, so a wall between two touching objects drifts apart. Now
-  measured: up to 2.2 voxels, 71 nm, on real neuropil, where 88.6% of vertex
-  positions are shared between labels. See [Related work](related-work.md).
+- **Fairing was per object rather than per cell**, and now can be either.
+  Frisken fairs one position per cell, shared by every label there; serra's
+  original `relaxation` and `taubin` fair each label's mesh independently, so a
+  wall between two touching objects drifts apart — measured at up to 2.2 voxels,
+  71 nm, on real neuropil, where 88.6% of vertex positions are shared between
+  labels. `fairing=k` implements the paper's formulation and reduces that to
+  exactly zero. Two deliberate departures remain: faces with no crossing are
+  excluded from the stencil, because the literal rule welds a one-voxel sheet
+  shut, and the cell bound is intersected with `max_deviation` rather than
+  replacing it.
 - **Fixed-point vertex positions**, integers in units of 1/256 of a voxel, and
   **pinned seam vertices during fairing**. Together these make a seam cell's
   vertex bit-identical in every chunk that contains it and keep a chunk's mesh
