@@ -216,3 +216,100 @@ The reference implementation could not be used for a head-to-head: `pygamer`
 2.0.7 (Aug 2021) ships source-only, and its vendored pybind11 predates CPython
 3.11's opaque `PyFrameObject`, so it does not build against a current
 interpreter. The published figures above are quoted from the papers.
+
+# Other published approaches to the same problem
+
+GAMer is one family. Asked what else addresses accurate meshing of binary and
+label segmentations, the literature splits along a line that turns out to
+matter: whether the staircase is fixed **on the mesh** or **in the volume**.
+
+## Extraction
+
+| approach | reference | relation to serra |
+| --- | --- | --- |
+| Marching cubes | Lorensen & Cline, SIGGRAPH '87 | the baseline; vertices pinned to edge midpoints |
+| MC with topological guarantees | Chernyaev's MC33, implemented by Lewiner, Lopes, Vieira & Tavares, *J. Graphics Tools* 8(2):1–15, 2003 | fixes the ambiguous-face cases; orthogonal to vertex placement |
+| SurfaceNets | Gibson, MICCAI '98, then Frisken, *JCGT* 11(1), 2022 | what serra implements |
+| Dual contouring | Ju, Losasso, Schaefer & Warren, SIGGRAPH '02; Manifold DC, Schaefer, Ju & Warren, *TVCG* 13(3), 2007 | same dual family, Hermite data rather than labels |
+| **Delaunay refinement** | Pons, Ségonne, Boissonnat, Rineau, Yvinec & Keriven, *High-Quality Consistent Meshing of Multi-label Datasets*, IPMI 2007; extended in *Engineering with Computers* 27, 2011; shipped in CGAL | the serious alternative — see below |
+| Connectomics-specific | Abdellah et al., *Ultraliser*, *Briefings in Bioinformatics* 24(1):bbac491, 2023 | watertight meshes from binary masks, built for thin neuronal structure |
+
+**Delaunay refinement is the one family that solves a problem serra does not.**
+It produces provably good triangles and, critically, surface and volume meshes
+of every label that are consistent with each other **including at multi-material
+junctions** — the exact place where serra's per-label smoothing lets adjacent
+objects drift apart. The cost is that it is a global, iterative refinement
+algorithm: it does not stream, does not chunk with bit-exact seams, and is
+orders of magnitude slower per object. For a hundred thousand objects in a chunk
+it is not a candidate; for a handful of tissues in a medical volume it is the
+right answer.
+
+## Smoothing: fix the volume, not the mesh
+
+This is the more useful answer to "the proper way to smooth small objects", and
+it is a different idea from anything serra currently does.
+
+> Whitaker, R. T. (2000). *Reducing Aliasing Artifacts in Iso-Surfaces of Binary
+> Volumes*. IEEE Symposium on Volume Visualization, 23–32.
+
+> Lempitsky, V. (2010). *Surface Extraction from Binary Volumes with
+> Higher-Order Smoothness*. CVPR 2010.
+
+Whitaker's method is explicitly a reformulation of Gibson's constrained elastic
+SurfaceNets that acts on the **volume** instead of the mesh: the level set moves
+under mean curvature flow with the binary data as a hard constraint, so the zero
+isosurface may not cross a voxel centre. Lempitsky's replaces the binary volume
+with a continuous embedding whose zero level set is smooth *and* consistent with
+the input, by convex optimisation, and can impose higher-order smoothness.
+
+The property that matters is the shape of the constraint. It is stated in terms
+of the data — *the extracted surface must still classify every voxel the way the
+input did* — so **shrinking a thin object away is not in the feasible set**.
+That is exactly the failure mode measured in
+[Accuracy](accuracy.md#thin-structures-decide-it), where Laplacian mesh
+relaxation removes 41% of a radius-2 tube. A mesh-domain smoother cannot express
+that constraint: `max_deviation` bounds how far a vertex moves but says nothing
+about whether the surface has crossed the data. ITK ships Whitaker's method as
+`AntiAliasBinaryImageFilter`.
+
+On the mesh side, volume loss is a known problem and Taubin's λ|μ is the
+standard answer — the medical-meshing literature generally recommends it, or
+HC-Laplacian (Vollmer, Mencl & Müller, *Improved Laplacian Smoothing of Noisy
+Surface Meshes*, Eurographics 1999), over plain Laplacian for exactly the
+reasons measured here.
+
+## Two things that do not work, measured
+
+Both are in `bench/analytic_tube.py`, scored against the analytic solid.
+
+**A distance transform buys nothing.** Marching cubes on a signed Euclidean
+distance transform of the mask is *identical* to marching cubes on the raw
+binary, to four decimal places in every metric. The EDT of a binary mask is
+itself quantised at the boundary — the first inside layer sits at +1 and the
+first outside layer at −1 — so linear interpolation lands on the midpoint just
+as it does for a binary field. Sub-voxel accuracy has to come from somewhere,
+and a distance transform does not create it.
+
+**Gaussian blur of the indicator shrinks like Laplacian smoothing.** On the
+radius-2 tube it removes about a third of the volume. Blurring is not a
+constrained operation, so it fails the same way and for the same reason.
+
+A naive stand-in for Whitaker — Gaussian blur of the embedding with the voxel
+signs pinned — also fails badly, and that is **not** evidence about Whitaker's
+method. An isotropic Gaussian averages straight through a tube two voxels
+across, where curvature flow in a narrow band would not. Testing the published
+algorithm means running ITK.
+
+## What this suggests for serra
+
+In order of expected value:
+
+1. **Fine-resolution vertex placement**, already measured in
+   [Accuracy](accuracy.md#when-the-voxels-are-not-the-truth): worth 4.3 IoU
+   points where smoothing is worth 0.03. Nothing in the literature above beats
+   simply having the finer data when it exists.
+2. **A constrained smoother in the volume**, Whitaker-style, run before
+   extraction. It composes with serra rather than replacing anything, and it is
+   the only approach found that structurally cannot eat a thin process.
+3. **Delaunay refinement's junction consistency** is the right idea; the cheap
+   version of it for serra is cell-domain smoothing, above.
