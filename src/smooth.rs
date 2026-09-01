@@ -260,6 +260,50 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
         .collect();
     let mut next = current.clone();
 
+    // Which faces each cell averages over, decided once for all sweeps.
+    //
+    // None of it varies between sweeps, and recomputing it was most of the
+    // cost. Locating a cell in the grid takes three integer divisions, and the
+    // compiler cannot strength-reduce them because the extents are runtime
+    // values -- so at twenty sweeps that was sixty divisions per cell spent
+    // rediscovering one byte.
+    //
+    // Folded in here too: whether a face has a neighbour at all, without which
+    // the low face of column zero would name the last column of the previous
+    // row -- a real cell, silently averaged against. And the junction rule: a
+    // junction cell slides along its curve, and seven in eight have exactly two
+    // junction faces, a curve entering and leaving. The rest fall back to the
+    // full stencil rather than be dragged onto a single neighbour.
+    let stencil: Vec<u8> = (0..n)
+        .map(|i| {
+            let l = linear[i] as usize;
+            let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
+            let mut in_grid = 0u8;
+            for (d, inside) in [
+                cx > 0,
+                cx + 1 < nx,
+                cy > 0,
+                cy + 1 < ny,
+                cz > 0,
+                cz + 1 < nz,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if inside {
+                    in_grid |= 1 << d;
+                }
+            }
+            let mask = crossings[i] as usize;
+            let junction = JUNCTION_FACES[mask] & in_grid;
+            if params.junction_rule && junction.count_ones() >= 2 {
+                junction
+            } else {
+                SURFACE_FACES[mask] & in_grid
+            }
+        })
+        .collect();
+
     // Big enough that the six binary searches at the head of each chunk are
     // noise, small enough to keep every core fed.
     const CHUNK: usize = 1 << 16;
@@ -278,41 +322,7 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
 
                 for (k, slot) in out.iter_mut().enumerate() {
                     let i = start + k;
-                    let l = linear[i] as usize;
-                    let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
-
-                    // Which faces have a neighbour at all. Without this the low
-                    // face of column zero would name the last column of the
-                    // previous row -- a real cell, silently averaged against.
-                    let mut in_grid = 0u8;
-                    for (d, bit) in [
-                        cx > 0,
-                        cx + 1 < nx,
-                        cy > 0,
-                        cy + 1 < ny,
-                        cz > 0,
-                        cz + 1 < nz,
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        if bit {
-                            in_grid |= 1 << d;
-                        }
-                    }
-
-                    let mask = crossings[i] as usize;
-                    let surface = SURFACE_FACES[mask] & in_grid;
-                    let junction = JUNCTION_FACES[mask] & in_grid;
-                    // A junction cell slides along its junction curve. Seven in
-                    // eight have exactly two junction faces, which is a curve
-                    // entering and leaving; the rest fall back rather than be
-                    // dragged onto a single neighbour.
-                    let use_mask = if params.junction_rule && junction.count_ones() >= 2 {
-                        junction
-                    } else {
-                        surface
-                    };
+                    let use_mask = stencil[i];
 
                     let mut sum = [0.0f32; 3];
                     let mut count = 0u32;
@@ -341,7 +351,7 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
                     }
 
                     let scale = 1.0 / count as f32;
-                    let offsets = &CENTROID[mask];
+                    let offsets = &CENTROID[crossings[i] as usize];
                     for a in 0..3 {
                         let average = sum[a] * scale;
                         let moved = current[i][a] + step * (average - current[i][a]);
