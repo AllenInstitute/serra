@@ -8,6 +8,8 @@ built for connectomics-scale data, where a single chunk may contain hundreds of
 thousands of distinct objects, so it makes **one pass over the volume** regardless of
 how many labels are present.
 
+Documentation at [https://alleninstitute.github.io/serra/]
+
 ```bash
 pip install serra-mesh
 ```
@@ -24,9 +26,9 @@ mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 
 serra uses **multi-label surface nets** (dual contouring) rather than marching cubes,
 following [Frisken (2022)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9623606/) — see
-[docs/references.md](docs/references.md) for the full lineage and how to cite.
+[docs/references.md](docs/references.md).
 Vertices sit inside cells at a position determined by where the label boundary
-crosses the cell, instead of being pinned to voxel-edge midpoints. That removes the
+crosses the cell, instead of being pinned to voxel-edge midpoints. This removes the
 staircase artifact, which shows up most clearly in surface area.
 
 Measured on analytically-known spheres (isotropic voxels), against `zmesh`:
@@ -42,6 +44,12 @@ bias, not a sampling error. With the optional relaxation pass enabled
 (`relaxation=3`) serra's area error drops to **+0.38%**, while volume stays within
 0.2% of analytic in every case.
 
+It also includes simplification and smoothing routines which maintain 
+**watertight** and produce no **non-manifold vertices or edges**, 
+while maintaining reproducible vertices at chunk boundaries to facilitate 
+large scale mesh generation via chunking. Dual contouring reads two cell layers
+per face, so one voxel of halo is not enough — see [docs/chunked.md](docs/chunked.md).)
+
 Two smoothing filters are available, both bounded by `max_deviation` and both
 safe to run per chunk because they pin seam vertices:
 
@@ -54,20 +62,6 @@ On real neuropil, `relaxation=3` loses 2.5% of an object's volume and
 `relaxation=10` loses 7%; `taubin` loses none. Prefer `taubin` when the meshes
 will be measured. See [docs/accuracy.md](docs/accuracy.md) for the full
 comparison and what each costs.
-
-Other properties:
-
-- **2-manifold per object.** No non-manifold vertices or edges. Cells where a label
-  touches itself only diagonally get their vertex split per connected component.
-- **Watertight** inside the volume; open only where an object runs off the edge.
-- **Deterministic.** Identical output regardless of thread count, memory order,
-  dtype width, or platform — including under relaxation, which uses Jacobi
-  iteration so no result depends on visit order.
-- **Chunk-seam exact.** Meshed with a 2-voxel positive-only halo and
-  `owned_shape` set, vertices on a shared seam are bit-identical between
-  neighbouring chunks, so chunks stitch by vertex dedup alone. Dual contouring
-  reads two cell layers per face, so one voxel of halo is not enough — see
-  [docs/chunked.md](docs/chunked.md).
 
 ## How it looks
 
@@ -213,10 +207,7 @@ but not identical to the same volume meshed in one piece.
 ## Naming
 
 The distribution is `serra-mesh` and the module is `serra_mesh`, because the
-name `serra` on PyPI belongs to an unrelated data-pipelines package that also
-ships a top-level `serra` module. Sharing the import name would risk one
-install silently overwriting the other, since pip does not detect file
-conflicts between distributions. The project itself is still serra.
+name `serra` on PyPI was taken.
 
 ## Status
 
