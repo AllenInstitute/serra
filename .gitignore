@@ -11,3 +11,6 @@ dist/
 build/
 site/
 .DS_Store
+precomputed/**
+# Locally exported precomputed datastores; regenerate with tools/export_precomputed.py
+/precomputed/
