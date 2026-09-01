@@ -445,10 +445,23 @@ def main() -> int:
             ]
         ]
         variants += [("serra, no smoothing", {})]
-        variants += [
-            (f"serra relaxation={k}", dict(relaxation=k)) for k in (1, 3, 5, 10)
-        ]
+        # Plain Laplacian smoothing is deliberately absent, in both its
+        # per-label form (`relaxation`) and its cell-domain one (`fairing`
+        # without Taubin steps). Both shrink -- 12% and 15% of a radius-4 tube
+        # at 20 sweeps, 41% of a radius-2 one -- so neither is worth
+        # recommending, and a comparison table is for the options you would
+        # actually pick between. The measurements are kept in docs/accuracy.md,
+        # which is the right place for evidence about what not to do.
         variants += [(f"serra taubin={k}", dict(taubin=k)) for k in (3, 10, 20, 40)]
+        # Cell-domain fairing: one shared position per cell rather than one per
+        # label. On a single object -- which is all an analytic tube is -- it
+        # should land on top of the per-label filters, because the two domains
+        # are the same graph when only one label is present. That agreement is
+        # the check; the reason to prefer it shows up only where objects touch.
+        variants += [
+            (f"serra fairing={k} + taubin", dict(fairing=k, fairing_taubin=True))
+            for k in (10, 20, 40)
+        ]
 
         print(
             f"\n{'mesh':>26} {'faces':>9} {'|error|':>9} {'bias':>9} {'p95':>8} "
@@ -504,8 +517,8 @@ def main() -> int:
             wanted = [
                 "zmesh (marching cubes)",
                 "serra, no smoothing",
-                "serra relaxation=10",
                 "serra taubin=20",
+                "serra fairing=20 + taubin",
             ]
             render_figure(
                 tube,

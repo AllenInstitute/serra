@@ -50,18 +50,26 @@ while maintaining reproducible vertices at chunk boundaries to facilitate
 large scale mesh generation via chunking. Dual contouring reads two cell layers
 per face, so one voxel of halo is not enough — see [docs/chunked.md](docs/chunked.md).)
 
-Two smoothing filters are available, both bounded by `max_deviation` and both
-safe to run per chunk because they pin seam vertices:
+Smoothing is optional, bounded by `max_deviation`, and safe to run per chunk
+because seam vertices are pinned:
 
 ```python
-serra_mesh.Mesher(relaxation=3)   # constrained Laplacian — cheap, but it shrinks
-serra_mesh.Mesher(taubin=10)      # low-pass — holds volume, costs more passes
+serra_mesh.Mesher(fairing=20, fairing_taubin=True)   # recommended
+serra_mesh.Mesher(taubin=20)                         # same filter, per label
 ```
 
-On real neuropil, `relaxation=3` loses 2.5% of an object's volume and
-`relaxation=10` loses 7%; `taubin` loses none. Prefer `taubin` when the meshes
-will be measured. See [docs/accuracy.md](docs/accuracy.md) for the full
-comparison and what each costs.
+**Prefer `fairing`.** It is Frisken's surface fairing: one position per *cell*,
+shared by every label present there, rather than a private copy per label. The
+accuracy is identical — 0.068 voxels of mean surface error against an analytic
+tube either way — but smoothing each label separately pulls the two copies of a
+wall between touching objects apart, by up to 2.2 voxels on real neuropil, and
+the segmentation stops being a partition of space. Sharing the cell makes that
+impossible: the copies are one number, not two that started equal.
+
+There is also `relaxation=k`, a plain Laplacian. **It is not recommended**: it
+shrinks, losing 2.5% of an object's volume at `k=3`, 7% at `k=10`, and 41% of a
+two-voxel-radius tube. It is kept because it is cheap and harmless on large
+objects. See [docs/accuracy.md](docs/accuracy.md).
 
 ## How it looks
 

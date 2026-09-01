@@ -153,21 +153,34 @@ quantisation noise and there is no real detail to destroy.
 
 | radius 4 voxels | faces | mean \|error\| | bias | volume | IoU |
 | --- | --- | --- | --- | --- | --- |
-| zmesh (marching cubes) | 13,504 | 0.141 vx | −0.021 | −1.18% | 93.34% |
-| serra, no smoothing | 13,504 | 0.109 vx | −0.043 | −2.15% | 94.77% |
-| `relaxation=3` | 13,504 | 0.123 vx | −0.111 | −5.29% | 94.11% |
-| `relaxation=10` | 13,504 | 0.264 vx | −0.261 | −12.23% | 87.60% |
-| `taubin=10` | 13,504 | 0.078 vx | −0.026 | −1.25% | 96.25% |
-| `taubin=20` | 13,504 | **0.068 vx** | **−0.009** | **−0.40%** | **96.75%** |
-| `taubin=40` | 13,504 | 0.066 vx | +0.025 | +1.28% | 96.81% |
+| zmesh (marching cubes) | 13,504 | 0.141 vx | −0.021 | −1.18% | 93.48% |
+| serra, no smoothing | 13,504 | 0.109 vx | −0.043 | −2.15% | 94.99% |
+| `taubin=10` | 13,504 | 0.078 vx | −0.026 | −1.25% | 96.39% |
+| `taubin=20` | 13,504 | 0.068 vx | −0.009 | −0.40% | 96.85% |
+| `fairing=10 + taubin` | 13,504 | 0.078 vx | −0.026 | −1.26% | 96.39% |
+| **`fairing=20 + taubin`** | 13,504 | **0.068 vx** | **−0.010** | **−0.42%** | **96.85%** |
+| `fairing=40 + taubin` | 13,504 | 0.063 vx | +0.021 | +1.08% | 96.98% |
 
-**Taubin recovers the smooth surface.** Mean error falls 38%, and the bias
-converges on zero — at `taubin=20` the surface is unbiased to within a hundredth
-of a voxel and the enclosed volume is within 0.4% of analytic. **Laplacian
-relaxation moves the wrong way** on every column past `k=1`. The bottom row of
-the figure shows why: relaxation's error map is uniformly blue, the whole
-surface having migrated inside the true one, while Taubin's is balanced about
-zero.
+**Smoothing recovers the surface downsampling hid.** Mean error falls 38% and
+the bias converges on zero — at 20 sweeps the surface is unbiased to within a
+hundredth of a voxel and the enclosed volume is within half a percent of
+analytic.
+
+**The cell domain and the label domain agree to three decimal places**, which is
+the point of running it here. An analytic tube is a single object, and on a
+single object the two are the same graph, so anything other than agreement would
+mean the cell-domain implementation was wrong. What it buys — adjacent objects
+that cannot drift apart — a one-object fixture structurally cannot show; that is
+measured on real neuropil below.
+
+!!! warning "Plain Laplacian smoothing is not in this table"
+
+    Neither `relaxation=k` nor `fairing=k` without Taubin steps appears here,
+    because neither is worth recommending: both shrink. At 20 sweeps on this
+    tube they lose 12% and 15% of the volume respectively, and 41% at radius 2.
+    They are the same operator in two different domains. The numbers are kept
+    under [thin structures](#thin-structures-decide-it) as evidence of what to
+    avoid, not offered as a choice.
 
 ### Thin structures decide it
 
@@ -175,25 +188,33 @@ The same experiment at three radii — mean surface error in voxels, then IoU:
 
 | | r=2 | r=4 | r=8 | | r=2 | r=4 | r=8 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| zmesh | 0.145 | 0.141 | 0.147 | | 86.7% | 93.3% | 96.7% |
-| no smoothing | 0.127 | 0.109 | 0.107 | | 87.9% | 94.8% | 97.6% |
-| `relaxation=3` | 0.217 | 0.123 | **0.087** | | 79.8% | 94.1% | 98.0% |
-| `relaxation=10` | **0.475** | 0.264 | 0.156 | | **59.1%** | 87.6% | 96.3% |
-| `taubin=20` | 0.087 | 0.068 | 0.067 | | 91.7% | 96.8% | 98.4% |
-| `taubin=40` | **0.082** | **0.066** | **0.065** | | **92.3%** | **96.8%** | **98.5%** |
+| zmesh | 0.145 | 0.141 | 0.147 | | 86.8% | 93.5% | 96.7% |
+| no smoothing | 0.127 | 0.109 | 0.107 | | 87.9% | 95.0% | 97.6% |
+| `taubin=20` | 0.087 | 0.068 | 0.067 | | 91.9% | 96.8% | 98.5% |
+| `fairing=20 + taubin` | 0.087 | 0.068 | 0.068 | | 91.9% | 96.9% | 98.5% |
+| **`fairing=40 + taubin`** | **0.079** | **0.063** | **0.063** | | **92.6%** | **97.0%** | **98.5%** |
+
+For scale, the Laplacian settings left out of this table: `relaxation=3` scores
+0.217 / 0.123 / 0.087 and `relaxation=10` scores 0.475 / 0.264 / 0.156, with IoU
+falling to **59.1%** at radius 2. That is the shrinkage, and it is worst exactly
+where connectomics lives.
 
 ![analytic tube, radius 2](images/analytic_tube_r2.png)
 
-On a radius-8 tube `relaxation=3` is the best Laplacian setting and genuinely
-good — 0.087 voxels, better than not smoothing. On a radius-2 tube the same
-setting is worse than not smoothing, and `relaxation=10` removes **41% of the
-volume** and drops IoU to 59%. The cost is a roughly fixed depth taken off every
-surface, so it scales as 1/r and thin processes pay in proportion; Taubin's
-advantage grows in the same direction.
+Read down the radius columns rather than across the rows. Every method improves
+as the tube thickens, but they do not improve at the same rate: at radius 8 even
+plain `relaxation=3` is respectable at 0.087 voxels, while at radius 2 it is
+*worse than not smoothing at all* and `relaxation=10` removes **41% of the
+volume**. Laplacian smoothing takes a roughly fixed depth off every surface, so
+the relative cost scales as 1/r and thin processes pay for it in proportion.
+Taubin's shrink compensation removes that term, which is why its advantage grows
+in the same direction the Laplacian's damage does.
 
-For connectomics that is the operating regime — a spine neck at 32 nm voxels is
-two or three voxels across. **Use `taubin` on anything thin; `relaxation` is
-only safe on large objects.**
+For connectomics that is the whole operating regime — a spine neck at 32 nm
+voxels is two or three voxels across. **Use `fairing` with Taubin steps.** The
+per-label `taubin` is equivalent on isolated objects and only differs where
+objects touch, and plain Laplacian smoothing should not be used on thin
+structures at all.
 
 Two other things the analytic reference settles:
 
