@@ -8,6 +8,8 @@ built for connectomics-scale data, where a single chunk may contain hundreds of
 thousands of distinct objects, so it makes **one pass over the volume** regardless of
 how many labels are present.
 
+Documentation at [https://alleninstitute.github.io/serra/]
+
 ```bash
 pip install serra-mesh
 ```
