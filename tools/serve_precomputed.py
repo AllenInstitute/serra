@@ -45,9 +45,22 @@ class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(fmt, *a)
 
 
-def neuroglancer_url(root: str, port: int) -> str:
-    """A link with every exported layer already in it."""
+# The BossDB mirror of the MICrONS minnie65 EM, which is what the cutouts here
+# were taken from. Public over HTTPS, so the browser can read it without
+# credentials. Note this is *not* interchangeable with other MICrONS-adjacent
+# imagery: v1dd, for instance, is a different animal at 4.85 x 4.85 x 45 nm and
+# would not line up with anything here.
+IMAGERY = (
+    "precomputed://https://bossdb-open-data.s3.amazonaws.com"
+    "/iarpa_microns/minnie/minnie65/em"
+)
+
+
+def neuroglancer_url(root: str, port: int, imagery: str = IMAGERY) -> str:
+    """A link with the imagery and every exported layer already in it."""
     layers = []
+    if imagery:
+        layers.append({"type": "image", "source": imagery, "name": "em"})
     for name in sorted(os.listdir(root)):
         if os.path.isfile(os.path.join(root, name, "info")):
             layers.append(
@@ -55,12 +68,14 @@ def neuroglancer_url(root: str, port: int) -> str:
                     "type": "segmentation",
                     "source": f"precomputed://http://localhost:{port}/{name}",
                     "name": name,
-                    "visible": len(layers) == 0,
+                    # One segmentation on at a time, so toggling compares them
+                    # in place rather than stacking two sets of meshes.
+                    "visible": not any(la["type"] == "segmentation" for la in layers),
                 }
             )
-    if not layers:
+    if not any(la["type"] == "segmentation" for la in layers):
         return ""
-    state = {"layers": layers, "layout": "3d"}
+    state = {"layers": layers, "layout": "4panel"}
     return "https://neuroglancer-demo.appspot.com/#!" + urllib.parse.quote(
         json.dumps(state, separators=(",", ":")), safe=""
     )
@@ -70,6 +85,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="precomputed")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--imagery",
+        default=IMAGERY,
+        help="EM layer to show underneath; empty string for none",
+    )
     args = parser.parse_args()
 
     root = os.path.abspath(args.root)
@@ -84,7 +104,7 @@ def main() -> int:
         for name in sorted(os.listdir(root)):
             if os.path.isfile(os.path.join(root, name, "info")):
                 print(f"  precomputed://http://localhost:{args.port}/{name}")
-        url = neuroglancer_url(root, args.port)
+        url = neuroglancer_url(root, args.port, args.imagery)
         if url:
             print(f"\nor open both at once:\n\n{url}\n")
         print("Ctrl-C to stop.")

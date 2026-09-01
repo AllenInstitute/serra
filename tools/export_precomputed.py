@@ -27,6 +27,7 @@ import gzip
 import json
 import os
 import shutil
+import struct
 import sys
 import time
 
@@ -42,7 +43,7 @@ def load(path: str) -> np.ndarray:
     return np.load(path)
 
 
-def write_volume(labels: np.ndarray, path: str, resolution) -> None:
+def write_volume(labels: np.ndarray, path: str, resolution, offset) -> None:
     """The segmentation layer, with a `mesh` key pointing at the mesh directory."""
     from cloudvolume import CloudVolume
 
@@ -50,7 +51,7 @@ def write_volume(labels: np.ndarray, path: str, resolution) -> None:
         labels,
         vol_path=f"file://{os.path.abspath(path)}",
         resolution=resolution,
-        voxel_offset=(0, 0, 0),
+        voxel_offset=tuple(int(v) for v in offset),
         layer_type="segmentation",
         # raw + uncompressed: see the module docstring. compressed_segmentation
         # would be smaller but adds a second thing to get wrong.
@@ -62,14 +63,29 @@ def write_volume(labels: np.ndarray, path: str, resolution) -> None:
     cv.commit_info()
 
 
-def write_meshes(meshes, path: str) -> int:
+def encode(vertices: np.ndarray, faces: np.ndarray, shift_nm) -> bytes:
+    """One precomputed mesh fragment, shifted into the global frame.
+
+    A mesher only knows the cutout, so its vertices are nanometres from the
+    cutout's own corner. Neuroglancer places a layer's voxel `i` at `i *
+    resolution` including the layer's `voxel_offset`, and expects mesh vertices
+    in that same global frame — so the cutout's origin has to be added back on
+    or the meshes sit at the corner of the dataset while the voxels sit in the
+    right place.
+    """
+    v = np.ascontiguousarray(np.asarray(vertices, np.float64) + shift_nm, dtype="<f4")
+    f = np.ascontiguousarray(faces, dtype="<u4")
+    return struct.pack("<I", len(v)) + v.tobytes() + f.tobytes()
+
+
+def write_meshes(meshes, path: str, shift_nm) -> int:
     """One manifest and one fragment per segment. Returns bytes written."""
     directory = os.path.join(path, "mesh")
     os.makedirs(directory, exist_ok=True)
     total = 0
     for label, mesh in meshes:
         fragment = f"{label}:0:1"
-        blob = mesh.to_precomputed()
+        blob = encode(mesh.vertices, mesh.faces, shift_nm)
         with open(os.path.join(directory, fragment), "wb") as handle:
             handle.write(blob)
         with open(os.path.join(directory, f"{label}:0"), "w") as handle:
@@ -144,9 +160,37 @@ def main() -> int:
     parser.add_argument("--max-error", type=float, default=40.0)
     parser.add_argument("--zmesh", default="/Users/forrestc/ConnectomeStack/zmesh")
     parser.add_argument("--resolution", type=int, nargs=3, default=list(RESOLUTION))
+    parser.add_argument(
+        "--global-origin",
+        type=int,
+        nargs=3,
+        default=None,
+        help="cutout corner in dataset voxels; read from the fixture sidecar if omitted",
+    )
+    parser.add_argument(
+        "--local-frame",
+        action="store_true",
+        help="place the cutout at the origin instead, so it stands alone",
+    )
+    parser.add_argument(
+        "--real-ids",
+        action="store_true",
+        help="restore live segment ids from the fixture's .segids.npy",
+    )
     args = parser.parse_args()
 
     volume = load(args.volume)
+
+    # Where this cutout sits in the dataset, so the imagery lines up with it.
+    origin = args.global_origin
+    if origin is None and not args.local_frame:
+        sidecar = args.volume.replace(".npy.gz", ".json").replace(".npy", ".json")
+        if os.path.exists(sidecar):
+            with open(sidecar) as handle:
+                origin = json.load(handle).get("origin_voxels")
+    if origin is None:
+        origin = [0, 0, 0]
+
     o, n = args.origin, args.size
     labels = np.ascontiguousarray(
         volume[o[0] : o[0] + n, o[1] : o[1] + n, o[2] : o[2] + n]
@@ -158,8 +202,23 @@ def main() -> int:
         if len(drop):
             labels[np.isin(labels, drop)] = 0
 
+    if args.real_ids:
+        # The fixture renumbers labels to keep the artifact small; this puts the
+        # live ids back so a segment can be looked up in the real dataset.
+        table = args.volume.replace(".npy.gz", ".segids.npy").replace(
+            ".npy", ".segids.npy"
+        )
+        if not os.path.exists(table):
+            raise SystemExit(f"--real-ids needs {table}")
+        segids = np.load(table)
+        labels = segids[labels].astype(np.uint64)
+
+    corner = [int(origin[k]) + int(o[k]) for k in range(3)]
+    shift_nm = np.asarray(corner, np.float64) * np.asarray(args.resolution, np.float64)
+
     present = int(len(np.unique(labels)) - 1)
     print(f"cutout {labels.shape} at {tuple(args.resolution)} nm, {present:,} objects")
+    print(f"placed at dataset voxel {tuple(corner)} = {tuple(shift_nm.astype(int))} nm")
 
     for name in args.variant:
         description, mesher, _ = VARIANTS[name]
@@ -170,12 +229,12 @@ def main() -> int:
 
         print(f"\n{name}: {description}")
         start = time.perf_counter()
-        write_volume(labels, path, args.resolution)
+        write_volume(labels, path, args.resolution, corner)
         volume_done = time.perf_counter()
 
         produced = list(mesher(labels, tuple(args.resolution), args))
         meshed = time.perf_counter()
-        written = write_meshes(produced, path)
+        written = write_meshes(produced, path, shift_nm)
         done = time.perf_counter()
 
         faces = sum(len(m.faces) for _, m in produced)
