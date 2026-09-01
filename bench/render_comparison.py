@@ -95,7 +95,17 @@ def panel_shape(bounds, size, lo=0.45, hi=1.7):
     return (size, int(round(size * aspect)))
 
 
-def render_panel(mesh, size, colour, bounds, detail=None, zoom_out=1.0):
+def render_panel(
+    mesh,
+    size,
+    colour,
+    bounds,
+    detail=None,
+    zoom_out=1.0,
+    scalars=None,
+    cmap=None,
+    clim=None,
+):
     """One panel.
 
     `bounds` frames the whole object and is shared by every panel in a row, so
@@ -107,15 +117,30 @@ def render_panel(mesh, size, colour, bounds, detail=None, zoom_out=1.0):
 
     plotter = pv.Plotter(off_screen=True, window_size=size)
     plotter.set_background("#16181c")
-    plotter.add_mesh(
-        mesh,
-        color=colour,
-        smooth_shading=False,
-        specular=0.35,
-        specular_power=18,
-        ambient=0.22,
-        diffuse=0.85,
-    )
+    if scalars is None:
+        plotter.add_mesh(
+            mesh,
+            color=colour,
+            smooth_shading=False,
+            specular=0.35,
+            specular_power=18,
+            ambient=0.22,
+            diffuse=0.85,
+        )
+    else:
+        # Colour by a per-vertex quantity instead of a flat tint — used to show
+        # *where* a mesh is wrong rather than only how much.
+        plotter.add_mesh(
+            mesh,
+            scalars=scalars,
+            cmap=cmap or "coolwarm",
+            clim=clim,
+            show_scalar_bar=False,
+            smooth_shading=False,
+            specular=0.1,
+            ambient=0.35,
+            diffuse=0.8,
+        )
     plotter.enable_anti_aliasing("ssaa")
     plotter.camera.parallel_projection = True
     plotter.view_vector(VIEW_DIRECTION, viewup=UP)

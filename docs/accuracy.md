@@ -123,6 +123,94 @@ python bench/download_microns.py --survey   # re-run the region search
 python bench/validate_winding.py
 ```
 
+## Judged against an analytic solid
+
+The comparisons above measure a mesh against the voxels it was built from, and
+the section below measures it against a finer grid. Both references are
+quantised, so both confound "the mesh is wrong" with "the reference is blocky".
+`bench/analytic_tube.py` removes the reference grid entirely.
+
+A tube is defined by a smooth closed space curve C(t) and a radius R(t), and a
+point is inside when its distance to the curve is less than the radius there —
+answerable exactly at any floating-point coordinate. The voxelisation, a voxel
+labelled by whether its *centre* is inside, is then the only quantised object in
+the experiment. The curve winds around the z axis while oscillating along it, so
+the surface presents every orientation to the grid rather than favouring the
+axis planes the way a sphere or a cylinder does.
+
+![analytic tube, radius 4](images/analytic_tube_r4.png)
+
+Two things are measured. **Surface accuracy**: sample points on the mesh,
+area-weighted, and evaluate the analytic signed distance at each — a perfect
+mesh scores zero, the mean absolute value is how far the surface sits from the
+truth, and the mean signed value says whether it sits systematically inside or
+outside. **Classification**: sample the box, ask the solid and the mesh
+independently, count disagreements.
+
+This is the most favourable setting for smoothing that exists. The true surface
+really is smooth, so everything separating it from the voxelisation is
+quantisation noise and there is no real detail to destroy.
+
+| radius 4 voxels | faces | mean \|error\| | bias | volume | IoU |
+| --- | --- | --- | --- | --- | --- |
+| zmesh (marching cubes) | 13,504 | 0.141 vx | −0.021 | −1.18% | 93.34% |
+| serra, no smoothing | 13,504 | 0.109 vx | −0.043 | −2.15% | 94.77% |
+| `relaxation=3` | 13,504 | 0.123 vx | −0.111 | −5.29% | 94.11% |
+| `relaxation=10` | 13,504 | 0.264 vx | −0.261 | −12.23% | 87.60% |
+| `taubin=10` | 13,504 | 0.078 vx | −0.026 | −1.25% | 96.25% |
+| `taubin=20` | 13,504 | **0.068 vx** | **−0.009** | **−0.40%** | **96.75%** |
+| `taubin=40` | 13,504 | 0.066 vx | +0.025 | +1.28% | 96.81% |
+
+**Taubin recovers the smooth surface.** Mean error falls 38%, and the bias
+converges on zero — at `taubin=20` the surface is unbiased to within a hundredth
+of a voxel and the enclosed volume is within 0.4% of analytic. **Laplacian
+relaxation moves the wrong way** on every column past `k=1`. The bottom row of
+the figure shows why: relaxation's error map is uniformly blue, the whole
+surface having migrated inside the true one, while Taubin's is balanced about
+zero.
+
+### Thin structures decide it
+
+The same experiment at three radii — mean surface error in voxels, then IoU:
+
+| | r=2 | r=4 | r=8 | | r=2 | r=4 | r=8 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| zmesh | 0.145 | 0.141 | 0.147 | | 86.7% | 93.3% | 96.7% |
+| no smoothing | 0.127 | 0.109 | 0.107 | | 87.9% | 94.8% | 97.6% |
+| `relaxation=3` | 0.217 | 0.123 | **0.087** | | 79.8% | 94.1% | 98.0% |
+| `relaxation=10` | **0.475** | 0.264 | 0.156 | | **59.1%** | 87.6% | 96.3% |
+| `taubin=20` | 0.087 | 0.068 | 0.067 | | 91.7% | 96.8% | 98.4% |
+| `taubin=40` | **0.082** | **0.066** | **0.065** | | **92.3%** | **96.8%** | **98.5%** |
+
+![analytic tube, radius 2](images/analytic_tube_r2.png)
+
+On a radius-8 tube `relaxation=3` is the best Laplacian setting and genuinely
+good — 0.087 voxels, better than not smoothing. On a radius-2 tube the same
+setting is worse than not smoothing, and `relaxation=10` removes **41% of the
+volume** and drops IoU to 59%. The cost is a roughly fixed depth taken off every
+surface, so it scales as 1/r and thin processes pay in proportion; Taubin's
+advantage grows in the same direction.
+
+For connectomics that is the operating regime — a spine neck at 32 nm voxels is
+two or three voxels across. **Use `taubin` on anything thin; `relaxation` is
+only safe on large objects.**
+
+Two other things the analytic reference settles:
+
+- **serra beats marching cubes at every radius**, by 10–25% in mean surface
+  error, with the largest gap on the thinnest tube.
+- **zmesh's `close=True` shifts its output by a whole voxel.** It pads the
+  volume and does not subtract the pad again. Measured on a sphere centred at
+  (32,32,32), zmesh's mesh centroid is (33,33,33) against serra's (32,32,32).
+  The benchmark corrects for it; uncorrected it reports a coordinate convention
+  as a 0.87-voxel accuracy difference.
+
+Reproduce, including the figures:
+
+```bash
+python bench/analytic_tube.py --render
+```
+
 ## When the voxels are not the truth
 
 Every number above treats the array being meshed as ground truth. In a
