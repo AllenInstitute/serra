@@ -111,6 +111,57 @@ def mesh_with_zmesh(labels, resolution, args):
             yield int(label), got
 
 
+def zmesh_face_counts(labels, resolution, args):
+    """How many faces zmesh spends on each object, at igneous' settings."""
+    sys.path.insert(0, args.zmesh)
+    import zmesh
+
+    mesher = zmesh.Mesher(resolution)
+    mesher.mesh(labels, close=False)
+    return {
+        int(label): len(
+            mesher.get(
+                label,
+                reduction_factor=args.reduction_factor,
+                max_error=args.max_error,
+            ).faces
+        )
+        for label in mesher.ids()
+    }
+
+
+def mesh_with_serra_matched(labels, resolution, args, **kwargs):
+    """serra decimated to zmesh's face count, object by object.
+
+    Matching per object rather than in aggregate is the point. A single global
+    reduction factor lands close on the total and still leaves individual
+    objects spending very different budgets in the two layers, which is exactly
+    what you notice when toggling between them. Here every segment is drawn with
+    the same number of triangles either way, so the only thing left to see is
+    where the surface went.
+
+    `max_error` is set out of the way so the face target is what decides;
+    at igneous' 40 nm bound serra only reaches 6x where zmesh reaches 10x,
+    because a smooth surface has less redundant geometry to collapse.
+    """
+    import serra_mesh
+
+    targets = zmesh_face_counts(labels, resolution, args)
+    mesher = serra_mesh.Mesher(voxel_resolution=list(resolution), **kwargs)
+    mesher.mesh(labels, close=False)
+    for label in mesher.ids():
+        label = int(label)
+        full = mesher.get(label)
+        if not len(full.faces):
+            continue
+        target = targets.get(label, 0)
+        if target <= 0 or len(full.faces) <= target:
+            yield label, full
+            continue
+        factor = max(2, int(round(len(full.faces) / target)))
+        yield label, mesher.get(label, reduction_factor=factor, max_error=1e9)
+
+
 def mesh_with_serra(labels, resolution, args, **kwargs):
     import serra_mesh
 
@@ -135,6 +186,13 @@ VARIANTS = {
         ),
         {},
     ),
+    "serra_matched": (
+        "serra with fairing, decimated per object to zmesh's face count",
+        lambda labels, res, args: mesh_with_serra_matched(
+            labels, res, args, fairing=20, fairing_taubin=True
+        ),
+        {},
+    ),
     "serra_raw": (
         "serra, no smoothing and no simplification",
         lambda labels, res, args: mesh_with_serra(labels, res, args),
@@ -152,7 +210,7 @@ def main() -> int:
     parser.add_argument(
         "--variant",
         nargs="*",
-        default=["zmesh", "serra_fairing"],
+        default=["zmesh", "serra_fairing", "serra_matched"],
         choices=sorted(VARIANTS),
     )
     parser.add_argument("--min-voxels", type=int, default=0)
