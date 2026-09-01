@@ -42,6 +42,19 @@ bias, not a sampling error. With the optional relaxation pass enabled
 (`relaxation=3`) serra's area error drops to **+0.38%**, while volume stays within
 0.2% of analytic in every case.
 
+Two smoothing filters are available, both bounded by `max_deviation` and both
+safe to run per chunk because they pin seam vertices:
+
+```python
+serra_mesh.Mesher(relaxation=3)   # constrained Laplacian — cheap, but it shrinks
+serra_mesh.Mesher(taubin=10)      # low-pass — holds volume, costs more passes
+```
+
+On real neuropil, `relaxation=3` loses 2.5% of an object's volume and
+`relaxation=10` loses 7%; `taubin` loses none. Prefer `taubin` when the meshes
+will be measured. See [docs/accuracy.md](docs/accuracy.md) for the full
+comparison and what each costs.
+
 Other properties:
 
 - **2-manifold per object.** No non-manifold vertices or edges. Cells where a label

@@ -10,6 +10,7 @@ pub mod orient;
 pub mod place;
 pub mod python;
 pub mod simplify;
+pub mod smooth;
 pub mod tables;
 
 use pyo3::prelude::*;

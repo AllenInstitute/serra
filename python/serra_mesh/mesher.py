@@ -31,15 +31,34 @@ class Mesher:
     y_down:
         Set for the image convention where Y increases downward.
     relaxation:
-        Iterations of constrained smoothing. Zero (the default) uses purely
-        local vertex placement. Raising it gives a smoother surface, more
-        accurate area and better normals, at some cost in speed.
+        Iterations of constrained Laplacian smoothing. Zero (the default) uses
+        purely local vertex placement. Raising it gives a smoother surface, more
+        accurate area and better normals, at some cost in speed. Mutually
+        exclusive with ``taubin``.
     max_deviation:
-        How far relaxation may move a vertex from where local placement put it,
+        How far smoothing may move a vertex from where local placement put it,
         in voxels. This bounds how far the surface can stray from the data and
-        stops smoothing from shrinking objects away.
+        stops smoothing from shrinking objects away. Applies to both filters.
     relaxation_step:
         Fraction of the way to the neighbour average per iteration, in (0, 1].
+    taubin:
+        Iterations of Taubin smoothing, each a shrinking pass followed by a
+        larger expanding one. Mutually exclusive with ``relaxation``, and
+        generally the better choice: Laplacian iteration is diffusion and drains
+        volume, whereas Taubin is a low-pass filter that leaves the shape's
+        low frequencies alone. It smooths considerably harder for the same
+        volume loss, at two passes per iteration rather than one.
+
+        Smoothing runs inside :meth:`mesh`, so a mesh is always smoothed
+        *before* :meth:`get` simplifies it — which is the order that measures
+        best. See ``bench/taubin.py``.
+    taubin_pass_band:
+        Graph frequency the filter leaves at unit gain, in (0, 1). Smaller
+        smooths more. The default of ``0.1`` matches VTK's convention.
+    taubin_lambda:
+        The positive step, in (0, 1). The negative step follows from this and
+        ``taubin_pass_band``; a pass band too wide for the chosen lambda is
+        rejected, because the filter would amplify rather than smooth.
     threads:
         How many threads to use. ``0`` (the default) uses every core; ``1``
         runs fully sequentially; any other value uses exactly that many.
@@ -64,8 +83,8 @@ class Mesher:
     leaves the dual cells along the seam unshared, and the surfaces will not
     meet.
 
-    One voxel of halo is enough at *any* ``relaxation`` setting. Relaxation
-    holds the outermost layer of cells fixed, so it never reads past the halo
+    The halo does not grow with the smoothing setting, for either filter. Both
+    hold the outermost layer of cells fixed, so neither ever reads past the halo
     and a chunk's mesh stays reproducible from that chunk's array alone. The
     trade-off is that a chunk's interior is smoothed slightly more than the band
     around its seams, so a stitched surface is self-consistent and watertight
@@ -87,6 +106,9 @@ class Mesher:
         relaxation: int = 0,
         max_deviation: float = 0.5,
         relaxation_step: float = 0.5,
+        taubin: int = 0,
+        taubin_pass_band: float = 0.1,
+        taubin_lambda: float = 0.63,
         threads: int = 0,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
@@ -95,9 +117,14 @@ class Mesher:
         self.relaxation = int(relaxation)
         self.max_deviation = float(max_deviation)
         self.relaxation_step = float(relaxation_step)
+        self.taubin = int(taubin)
+        self.taubin_pass_band = float(taubin_pass_band)
+        self.taubin_lambda = float(taubin_lambda)
         self.threads = int(threads)
         if self.relaxation < 0:
             raise ValueError("relaxation must be non-negative")
+        if self.taubin < 0:
+            raise ValueError("taubin must be non-negative")
         if self.threads < 0:
             raise ValueError("threads must be non-negative (0 means all cores)")
         self._inner = _serra_mesh.Mesher(
@@ -107,6 +134,9 @@ class Mesher:
             relaxation=self.relaxation,
             max_deviation=self.max_deviation,
             relaxation_step=self.relaxation_step,
+            taubin=self.taubin,
+            taubin_pass_band=self.taubin_pass_band,
+            taubin_lambda=self.taubin_lambda,
             threads=self.threads,
         )
 

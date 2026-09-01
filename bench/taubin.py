@@ -7,13 +7,15 @@ whether Taubin adds anything on top, whether it can be run per chunk without
 breaking stitching, and in which order it should be composed with quadric
 simplification.
 
-Four experiments:
+Five experiments:
 
 1. Analytic shapes, where area, volume and every normal are known exactly.
 2. Seam preservation: smooth two chunks separately, then stitch.
 3. Order of operations against quadric simplification.
 4. Real neuropil, where the objects are thin processes rather than spheres,
    and where unconstrained smoothing has somewhere to go wrong.
+5. serra's own built-in filter (`Mesher(taubin=k)`) against all of the above --
+   what the measurements in 1-4 were used to justify building.
 
     uv sync --group bench
     python bench/taubin.py
@@ -509,6 +511,108 @@ def experiment_neuropil(zmesh_mod, serra_mesh, volume_array, labels):
     print(f"\n   ({len(interior)} closed objects)\n")
 
 
+def experiment_builtin(serra_mesh, radius=32):
+    """serra's own filter, against the post-hoc one and against relaxation."""
+    print("=" * 78)
+    print("5. The built-in filter: Mesher(taubin=k)")
+    print("=" * 78)
+    print(
+        "   lambda/mu Taubin in Rust, run inside mesh() with seam vertices"
+        " pinned and\n   the same max_deviation bound relaxation uses. Compare"
+        " the shape of the two\n   curves, not single rows: relaxation buys"
+        " normals with volume, Taubin does\n   not.\n"
+    )
+
+    mask = sphere_mask(radius)
+    centre = (mask.shape[0] - 1) / 2
+    exact_area = 4 * np.pi * radius**2
+    exact_volume = 4 / 3 * np.pi * radius**3
+
+    print(f"{'setting':>24} {'area err':>9} {'volume err':>11} {'normal err':>11}")
+    settings = [
+        ("no smoothing", {}),
+        ("relaxation=3", {"relaxation": 3}),
+        ("relaxation=10", {"relaxation": 10}),
+        ("relaxation=20", {"relaxation": 20}),
+        ("taubin=3", {"taubin": 3}),
+        ("taubin=10", {"taubin": 10}),
+        ("taubin=20", {"taubin": 20}),
+        ("taubin=40", {"taubin": 40}),
+    ]
+    for name, kwargs in settings:
+        mesher = serra_mesh.Mesher(voxel_resolution=[1.0, 1.0, 1.0], **kwargs)
+        mesh = mesher.mesh(mask, close=True).get(1)
+        v, f = mesh.vertices.astype(np.float64), mesh.faces
+        print(
+            f"{name:>24} "
+            f"{area(v, f) / exact_area - 1:>+8.2%} "
+            f"{volume(v, f) / exact_volume - 1:>+10.2%} "
+            f"{normal_error_degrees(v, f, lambda p: p - centre):>10.2f}d"
+        )
+
+    # And against the post-hoc VTK filter on the same surface, since that is
+    # what the earlier experiments measured.
+    plain = serra_mesh.Mesher(voxel_resolution=[1.0, 1.0, 1.0])
+    mesh = plain.mesh(mask, close=True).get(1)
+    sv, sf = taubin(mesh.vertices.astype(np.float64), mesh.faces)
+    print(
+        f"{'k=0 + vtk (20 iter)':>24} "
+        f"{area(sv, sf) / exact_area - 1:>+8.2%} "
+        f"{volume(sv, sf) / exact_volume - 1:>+10.2%} "
+        f"{normal_error_degrees(sv, sf, lambda p: p - centre):>10.2f}d"
+    )
+    print()
+
+
+def experiment_builtin_on_real_data(serra_mesh, volume_array, labels):
+    """Where it actually matters: thin processes, not spheres."""
+    print("=" * 78)
+    print("6. The built-in filter on real neuropil")
+    print("=" * 78)
+    print(
+        "   Voxel count is the truth, and only objects clear of the array faces"
+        " count,\n   since one running off the edge is closed by a cap rather"
+        " than by its own\n   surface. This is the table that decides the"
+        " default: a spine neck has a\n   surface-to-volume ratio a sphere does"
+        " not.\n"
+    )
+
+    voxel_volume = float(np.prod(RESOLUTION))
+    base = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION))
+    base.mesh(volume_array, close=True)
+    interior = [
+        (label, voxels)
+        for label, voxels in labels
+        if label in base and base.get(label).is_closed()
+    ]
+
+    print(f"{'setting':>24} {'volume / true':>14} {'area / unsmoothed':>18}")
+    baseline_area = None
+    for name, kwargs in [
+        ("no smoothing", {}),
+        ("relaxation=3", {"relaxation": 3}),
+        ("relaxation=10", {"relaxation": 10}),
+        ("taubin=3", {"taubin": 3}),
+        ("taubin=10", {"taubin": 10}),
+        ("taubin=20", {"taubin": 20}),
+    ]:
+        mesher = serra_mesh.Mesher(voxel_resolution=list(RESOLUTION), **kwargs)
+        mesher.mesh(volume_array, close=True)
+        total_v = total_a = total_truth = 0.0
+        for label, voxels in interior:
+            got = mesher.get(label)
+            total_v += got.volume()
+            total_a += got.area()
+            total_truth += voxels * voxel_volume
+        if baseline_area is None:
+            baseline_area = total_a
+        print(
+            f"{name:>24} {total_v / total_truth:>13.2%} "
+            f"{total_a / baseline_area:>17.1%}"
+        )
+    print(f"\n   ({len(interior)} closed objects)\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--volume", default="data/microns_neuropil.npy.gz")
@@ -526,12 +630,14 @@ def main() -> int:
 
     experiment_analytic(zmesh, serra_mesh)
     experiment_seams(serra_mesh)
+    experiment_builtin(serra_mesh)
 
     if not args.skip_real:
         volume_array = load(args.volume)
         labels = sample_labels(volume_array, args.objects, args.low, args.high)
         experiment_order(serra_mesh, volume_array, labels)
         experiment_neuropil(zmesh, serra_mesh, volume_array, labels)
+        experiment_builtin_on_real_data(serra_mesh, volume_array, labels)
     return 0
 
 
