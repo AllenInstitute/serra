@@ -36,8 +36,9 @@ paper:
   voxel set touches itself only diagonally.
 - **Fairing is per object, not per cell.** Frisken relaxes one position per
   cell, shared by every label there. serra relaxes each label's mesh
-  independently, so a wall between two touching objects can drift apart at its
-  rim. Quantifying that is open work.
+  independently, so a wall between two touching objects drifts apart. Now
+  measured: up to 2.2 voxels, 71 nm, on real neuropil, where 88.6% of vertex
+  positions are shared between labels. See [Related work](related-work.md).
 - **Fixed-point vertex positions**, integers in units of 1/256 of a voxel, and
   **pinned seam vertices during fairing**. Together these make a seam cell's
   vertex bit-identical in every chunk that contains it and keep a chunk's mesh
@@ -67,6 +68,24 @@ pipelines use, and what the comparisons throughout these docs measure against:
 > Lorensen, W. E., & Cline, H. E. (1987). *Marching Cubes: A High Resolution 3D
 > Surface Construction Algorithm*. Computer Graphics (SIGGRAPH '87), 21(4),
 > 163–169.
+
+## Mesh conditioning
+
+Not implemented here, but measured against and discussed in
+[Related work](related-work.md):
+
+> Yu, Z., Holst, M. J., Cheng, Y., & McCammon, J. A. (2008).
+> *Feature-preserving adaptive mesh generation for molecular shape modeling and
+> simulation*. Journal of Molecular Graphics and Modelling, 26(8), 1370–1380.
+
+> Lee, C. T., Laughlin, J. G., Angliviel de La Beaumelle, N., Amaro, R. E.,
+> McCammon, J. A., Ramamoorthi, R., Holst, M., & Rangamani, P. (2020). *3D mesh
+> processing using GAMer 2 to enable reaction-diffusion simulations in realistic
+> cellular geometries*. PLoS Computational Biology, 16(4), e1007756.
+
+The local structure tensor from those papers is the one technique that
+transfers; the rest of the toolchain repairs marching-cubes slivers that label
+data does not produce.
 
 ## Simplification
 
