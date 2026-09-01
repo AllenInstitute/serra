@@ -221,6 +221,39 @@ because a decimated mesh has no high-frequency detail left to remove and the
 filter eats structure instead. serra gets this order for free: smoothing happens
 in `mesh()`, simplification in `get()`.
 
+### Do fixed settings transfer between big and small objects?
+
+Convergence does. Spheres from r=8 to r=64 — a 65× range in vertex count — with
+the same settings throughout, mean normal error in degrees:
+
+| | r=8 | r=16 | r=32 | r=64 |
+| --- | --- | --- | --- | --- |
+| no smoothing | 12.62 | 11.84 | 12.52 | 12.25 |
+| `relaxation=3` | 5.81 | 4.84 | 5.16 | 4.98 |
+| `taubin=10` | 5.76 | 4.91 | 5.19 | 4.98 |
+| `taubin=20` | 4.32 | 3.67 | 3.80 | 3.60 |
+
+Flat, and structurally so rather than by luck. Dual contouring places one vertex
+per cell, so edge length is about one voxel whatever the object's size, and the
+staircase artifact therefore sits in a fixed band of *graph* frequency at every
+scale. A fixed iteration count removes the same thing on a spine head as on a
+cell body. This would not hold on a mesh with non-uniform edge lengths, which is
+another reason smoothing belongs before decimation.
+
+The shrinkage does not transfer, and this is the hazard. Same runs, area error:
+
+| | r=8 | r=16 | r=32 | r=64 |
+| --- | --- | --- | --- | --- |
+| `relaxation=3` | −2.94% | −0.48% | +0.28% | +0.45% |
+| `relaxation=10` | **−7.14%** | −1.83% | −0.42% | −0.05% |
+| `taubin=10` | −0.86% | +0.10% | +0.47% | +0.54% |
+| `taubin=20` | −0.66% | +0.01% | +0.25% | +0.30% |
+
+Laplacian iteration removes a roughly fixed *depth* from every surface, so the
+relative cost goes as 1/r. A `relaxation` setting tuned on a large object will
+quietly eat small ones. Taubin's bias is about ten times flatter over the same
+range.
+
 ### Smoothing a chunked volume
 
 Both filters pin the outermost layer of cells, so seam vertices stay
@@ -245,7 +278,33 @@ smoothing the whole volume in one piece would have put it.
 The trade-off `serra` accepts by pinning instead: a chunk's interior smooths
 slightly more than the band around its seams, so a stitched surface is
 self-consistent and watertight but not identical to the same volume smoothed in
-one piece.
+one piece. Measured on a sphere of radius 60 in a 144³ volume at `taubin=10`,
+with a positive-only halo of 2:
+
+| chunk | chunks | pinned | stitches | faces = whole-volume | median | worst |
+| --- | --- | --- | --- | --- | --- | --- |
+| 16³ | 296 | 12.2% | yes | yes | 0.004 vx | 0.171 vx |
+| 24³ | 137 | 8.3% | yes | yes | 0.000 vx | 0.171 vx |
+| 36³ | 57 | 5.4% | yes | yes | 0.000 vx | 0.174 vx |
+| 48³ | 26 | 3.8% | yes | yes | 0.000 vx | 0.171 vx |
+| 72³ | 8 | 2.1% | yes | yes | 0.000 vx | 0.129 vx |
+
+The pinned fraction follows surface-to-volume, so it is under 1% at a 256³
+chunk. `median` and `worst` are distances from where smoothing the whole volume
+in one piece would have put the surface: at 36³ and above, half the vertices
+land in exactly the same place, and the worst case is a sixth of a voxel on the
+seam ring itself.
+
+### A trap if you smooth with pyvista instead
+
+`boundary_smoothing` is [documented backwards](https://github.com/pyvista/pyvista/issues/8860):
+boundary edges are held fixed when it is **`False`**, not `True`. And the window
+function matters more than it looks — Nuttall was added to VTK specifically to
+fix the shrinkage the older Hamming window produces under normalization, and in
+the seam measurements above it holds borders about 35× tighter than Blackman and
+800× tighter than Hamming. `smooth_taubin` does not expose the choice before
+pyvista 0.49, which is why `bench/taubin.py` drives `vtkWindowedSincPolyDataFilter`
+directly.
 
 ### Reproducing
 
