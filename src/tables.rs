@@ -290,6 +290,116 @@ const fn build_ambiguous() -> [bool; 256] {
     out
 }
 
+/// How many distinct surfaces cross one face of a cell.
+///
+/// Frisken (2022) distinguishes these because they decide how a cell's vertex
+/// may move during fairing. A face with a single crossing is a plain wall; a
+/// face with two or more is part of a *junction*, where three or more materials
+/// meet, and a vertex there should slide along the junction rather than be
+/// pulled off it.
+pub const FACE_UNIFORM: u8 = 0;
+/// One boundary crosses the face: two materials, not diagonally arranged.
+pub const FACE_SURFACE: u8 = 1;
+/// Two or more boundaries cross: three or more materials, or two materials
+/// sitting on diagonally opposite corners.
+pub const FACE_JUNCTION: u8 = 2;
+
+/// The four corners of each cell face, in cyclic order.
+///
+/// Cyclic matters: entries 0/2 and 1/3 are the two diagonals, which is what
+/// makes the checkerboard case a single comparison. Ordered the same way as
+/// [`crate::extract`]'s `RING`, for the same reason.
+pub const FACE_CORNERS: [[u8; 4]; 6] = build_face_corners();
+
+const fn build_face_corners() -> [[u8; 4]; 6] {
+    // Offsets within the face, cyclic, so [0]/[2] and [1]/[3] are diagonal.
+    const CYCLE: [(usize, usize); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
+    let mut out = [[0u8; 4]; 6];
+    let mut face = 0;
+    while face < 6 {
+        let axis = face / 2;
+        let value = face % 2;
+        let u = (axis + 1) % 3;
+        let w = (axis + 2) % 3;
+        let mut k = 0;
+        while k < 4 {
+            let (du, dv) = CYCLE[k];
+            out[face][k] = ((value << axis) | (du << u) | (dv << w)) as u8;
+            k += 1;
+        }
+        face += 1;
+    }
+    out
+}
+
+/// The six corner pairs of a face, in the order [`FACE_KIND`] is indexed by.
+const FACE_PAIRS: [(usize, usize); 6] = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+
+/// Face kind for every equality pattern of a face's four corner labels.
+///
+/// Indexed by a 6-bit code whose bit `i` is set when the corners of
+/// `FACE_PAIRS[i]` carry the same label. Only the pattern of equalities
+/// matters, not the label values, so 64 entries cover every possible face —
+/// including the codes that are not transitively consistent, which the
+/// union-find below resolves rather than rejects.
+pub static FACE_KIND: [u8; 64] = build_face_kind();
+
+const fn build_face_kind() -> [u8; 64] {
+    let mut out = [FACE_UNIFORM; 64];
+    let mut code = 0usize;
+    while code < 64 {
+        // Union-find over the four corners, so an inconsistent code still lands
+        // on a well-defined partition.
+        let mut rep = [0usize, 1, 2, 3];
+        let mut i = 0;
+        while i < 6 {
+            if code & (1 << i) != 0 {
+                let (a, b) = FACE_PAIRS[i];
+                let (mut ra, mut rb) = (a, b);
+                while rep[ra] != ra {
+                    ra = rep[ra];
+                }
+                while rep[rb] != rb {
+                    rb = rep[rb];
+                }
+                if ra < rb {
+                    rep[rb] = ra;
+                } else if rb < ra {
+                    rep[ra] = rb;
+                }
+            }
+            i += 1;
+        }
+        let mut classes = 0;
+        let mut c = 0;
+        while c < 4 {
+            let mut r = c;
+            while rep[r] != r {
+                r = rep[r];
+            }
+            if r == c {
+                classes += 1;
+            }
+            c += 1;
+        }
+
+        // Same label on both diagonals, different across them: the checkerboard
+        // face, where two surfaces cross even though only two materials are
+        // present.
+        let diagonal = code & (1 << 1) != 0 && code & (1 << 4) != 0 && code & 1 == 0;
+
+        out[code] = if classes == 1 {
+            FACE_UNIFORM
+        } else if classes >= 3 || diagonal {
+            FACE_JUNCTION
+        } else {
+            FACE_SURFACE
+        };
+        code += 1;
+    }
+    out
+}
+
 const fn build_surface() -> SurfaceTables {
     let mut component = [[NO_COMPONENT; NEDGES]; 256];
     let mut sheets = [0u8; 256];
@@ -562,6 +672,118 @@ mod surface_tests {
                 let other = c ^ (1 << axis);
                 let (lo, hi) = if c < other { (c, other) } else { (other, c) };
                 assert_eq!((EDGES[e].0 as usize, EDGES[e].1 as usize), (lo, hi));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod face_kind_tests {
+    use super::*;
+
+    /// Classify a face directly from four labels, mirroring `place::face_kinds`
+    /// for one face so the table can be exercised without the cell machinery.
+    fn kind(l: [u32; 4]) -> u8 {
+        let mut code = 0usize;
+        let mut bit = 0;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                if l[i] == l[j] {
+                    code |= 1 << bit;
+                }
+                bit += 1;
+            }
+        }
+        FACE_KIND[code]
+    }
+
+    #[test]
+    fn one_label_is_uniform() {
+        assert_eq!(kind([7, 7, 7, 7]), FACE_UNIFORM);
+    }
+
+    #[test]
+    fn a_straight_boundary_is_a_surface() {
+        // Corners are cyclic, so [0,1] against [2,3] is a split down the middle.
+        assert_eq!(kind([1, 1, 2, 2]), FACE_SURFACE);
+        // And three against one is still a single crossing.
+        assert_eq!(kind([1, 1, 1, 2]), FACE_SURFACE);
+        assert_eq!(kind([2, 1, 1, 1]), FACE_SURFACE);
+    }
+
+    #[test]
+    fn two_labels_on_opposite_diagonals_are_a_junction() {
+        // The checkerboard: only two materials, but two surfaces cross the face.
+        assert_eq!(kind([1, 2, 1, 2]), FACE_JUNCTION);
+        assert_eq!(kind([2, 1, 2, 1]), FACE_JUNCTION);
+    }
+
+    #[test]
+    fn three_or_more_labels_are_a_junction() {
+        assert_eq!(kind([1, 2, 3, 1]), FACE_JUNCTION);
+        assert_eq!(kind([1, 2, 3, 4]), FACE_JUNCTION);
+    }
+
+    #[test]
+    fn background_is_just_another_label_here() {
+        // Nothing in the classification privileges label 0; a face between an
+        // object and background is an ordinary wall.
+        assert_eq!(kind([0, 0, 5, 5]), FACE_SURFACE);
+        assert_eq!(kind([0, 5, 0, 5]), FACE_JUNCTION);
+    }
+
+    #[test]
+    fn face_corners_are_cyclic_and_cover_each_face() {
+        for (f, face) in FACE_CORNERS.iter().enumerate() {
+            let (axis, value) = (f / 2, f % 2);
+            let mut seen = [false; NCORNERS];
+            for &c in face {
+                assert_eq!(
+                    (c as usize >> axis) & 1,
+                    value,
+                    "face {f} corner {c} off-face"
+                );
+                assert!(!seen[c as usize], "face {f} repeats corner {c}");
+                seen[c as usize] = true;
+            }
+            // Cyclic order means consecutive corners differ in exactly one axis,
+            // and 0/2, 1/3 are the diagonals, differing in two.
+            for k in 0..4 {
+                let a = face[k] as usize;
+                let b = face[(k + 1) % 4] as usize;
+                assert_eq!((a ^ b).count_ones(), 1, "face {f}: {a},{b} not an edge");
+            }
+            assert_eq!((face[0] ^ face[2]).count_ones(), 2);
+            assert_eq!((face[1] ^ face[3]).count_ones(), 2);
+        }
+    }
+
+    /// The table must agree with a brute-force classification over every
+    /// assignment of up to four distinct labels to the four corners.
+    #[test]
+    fn table_matches_brute_force_over_every_labelling() {
+        for a in 0..4u32 {
+            for b in 0..4u32 {
+                for c in 0..4u32 {
+                    for d in 0..4u32 {
+                        let l = [a, b, c, d];
+                        let mut distinct = 0;
+                        for i in 0..4 {
+                            if (0..i).all(|j| l[j] != l[i]) {
+                                distinct += 1;
+                            }
+                        }
+                        let diagonal = a == c && b == d && a != b;
+                        let want = if distinct == 1 {
+                            FACE_UNIFORM
+                        } else if distinct >= 3 || diagonal {
+                            FACE_JUNCTION
+                        } else {
+                            FACE_SURFACE
+                        };
+                        assert_eq!(kind(l), want, "labels {l:?}");
+                    }
+                }
             }
         }
     }

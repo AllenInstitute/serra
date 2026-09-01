@@ -9,7 +9,7 @@
 //! Whatever smoothing runs afterwards lives in [`crate::smooth`].
 
 use crate::grid::Label;
-use crate::tables::{CENTROID, EDGES, SUBVOXEL};
+use crate::tables::{CENTROID, EDGES, FACE_CORNERS, FACE_JUNCTION, FACE_KIND, NCORNERS, SUBVOXEL};
 
 /// Which of the 12 cube edges have differing labels at their two ends.
 ///
@@ -23,6 +23,55 @@ pub fn crossing_mask<T: Label>(corners: &[T; 8]) -> u16 {
         }
     }
     mask
+}
+
+/// How each of the cell's six faces is crossed, packed two bits per face.
+///
+/// Face `f` occupies bits `2f` and `2f+1`, holding [`FACE_UNIFORM`],
+/// [`FACE_SURFACE`] or [`FACE_JUNCTION`]. Like [`crossing_mask`] this reads the
+/// cell's eight corners and nothing else, so neighbouring chunks classify a
+/// shared face identically.
+///
+/// Only the *pattern* of equalities among a face's four corner labels matters,
+/// never the label values, which is what lets a 64-entry table decide it.
+///
+/// [`FACE_UNIFORM`]: crate::tables::FACE_UNIFORM
+/// [`FACE_SURFACE`]: crate::tables::FACE_SURFACE
+/// [`FACE_JUNCTION`]: crate::tables::FACE_JUNCTION
+#[inline]
+pub fn face_kinds<T: Label>(corners: &[T; NCORNERS]) -> u16 {
+    let mut packed = 0u16;
+    for (f, face) in FACE_CORNERS.iter().enumerate() {
+        let l = [
+            corners[face[0] as usize],
+            corners[face[1] as usize],
+            corners[face[2] as usize],
+            corners[face[3] as usize],
+        ];
+        let mut code = 0usize;
+        let mut bit = 0;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                if l[i] == l[j] {
+                    code |= 1 << bit;
+                }
+                bit += 1;
+            }
+        }
+        packed |= (FACE_KIND[code] as u16) << (2 * f);
+    }
+    packed
+}
+
+/// Whether this cell's vertex sits on a junction, in Frisken's sense: some face
+/// has more than one surface crossing it.
+///
+/// Such a vertex is faired against its junction neighbours alone, so that it
+/// slides along the junction curve instead of being dragged off it by the
+/// ordinary walls that also meet there.
+#[inline]
+pub fn is_edge_vertex(face_kinds: u16) -> bool {
+    (0..6).any(|f| (face_kinds >> (2 * f)) & 0b11 == FACE_JUNCTION as u16)
 }
 
 /// The cell's dual vertex, in 1/256-voxel fixed point, absolute in
