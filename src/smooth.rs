@@ -29,8 +29,9 @@
 //! is self-consistent and watertight but not identical to the same volume
 //! smoothed in one piece.
 
-use crate::extract::LabelMesh;
-use crate::tables::SUBVOXEL;
+use crate::extract::{CellField, LabelMesh};
+use crate::tables::{CENTROID, JUNCTION_FACES, SUBVOXEL, SURFACE_FACES};
+use rayon::prelude::*;
 
 /// Settings for the optional relaxation pass.
 #[derive(Clone, Copy, Debug)]
@@ -139,6 +140,198 @@ impl Smoothing {
             Smoothing::Laplacian(r) => r.iterations > 0,
             Smoothing::Taubin(t) => t.iterations > 0,
         }
+    }
+}
+
+/// Settings for fairing in the cell domain.
+///
+/// This is Frisken's surface fairing rather than serra's per-label relaxation:
+/// one position per cell, shared by every material there, so the copies of a
+/// wall between two touching objects cannot drift apart.
+#[derive(Clone, Copy, Debug)]
+pub struct Fairing {
+    /// Number of Jacobi sweeps. Zero disables the pass.
+    pub iterations: u32,
+    /// Fraction of the way to the neighbour average each sweep, in (0, 1].
+    pub step: f64,
+    /// How far a vertex may drift from where placement put it, in voxels.
+    ///
+    /// Intersected with the cell, never replaced by it. The two bounds are not
+    /// nested: a placed vertex sits between 43/256 and 213/256 of the way
+    /// across its cell, so the cell is the tighter bound on one side and the
+    /// looser on the other. Taking both keeps the documented `max_deviation`
+    /// guarantee true and adds Frisken's containment on top.
+    pub max_deviation: f64,
+    /// Restrict junction cells to their junction neighbours.
+    pub junction_rule: bool,
+}
+
+impl Default for Fairing {
+    fn default() -> Self {
+        Fairing {
+            iterations: 0,
+            step: 0.5,
+            max_deviation: 0.5,
+            junction_rule: true,
+        }
+    }
+}
+
+/// Fair the cell field in place.
+///
+/// Neighbours are the cells across the six faces, which is Frisken's stencil
+/// with one deliberate exception: **faces with no crossing are skipped**. A face
+/// no surface passes through separates two cells that are not on a common
+/// sheet, and averaging across it drags them together. On a sheet one voxel
+/// thick the two sides are face-adjacent, so the literal rule collapses it to
+/// zero thickness, and no displacement bound prevents that because the sides
+/// begin exactly one voxel apart. Excluding uniform faces makes the stencil
+/// exactly the union over labels of the quad adjacency serra already builds.
+///
+/// Jacobi, and every output depends only on the previous sweep and on a fixed
+/// six-entry stencil summed in face order, so the result is identical for any
+/// chunking or thread count.
+pub fn fair(cells: &mut CellField, params: &Fairing) {
+    let n = cells.positions.len();
+    if params.iterations == 0 || n == 0 {
+        return;
+    }
+    let [nx, ny, nz] = cells.nc;
+    let plane = nx * ny;
+    let offset: [i64; 6] = [
+        -1,
+        1,
+        -(nx as i64),
+        nx as i64,
+        -(plane as i64),
+        plane as i64,
+    ];
+
+    let placed = &cells.positions;
+    let linear = &cells.linear;
+    let crossings = &cells.crossings;
+    let pinned = &cells.pinned;
+    let limit = (params.max_deviation * SUBVOXEL as f64) as f32;
+    let step = params.step as f32;
+
+    let mut current: Vec<[f32; 3]> = placed
+        .iter()
+        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+        .collect();
+    let mut next = current.clone();
+
+    // Big enough that the six binary searches at the head of each chunk are
+    // noise, small enough to keep every core fed.
+    const CHUNK: usize = 1 << 16;
+
+    for _ in 0..params.iterations {
+        next.par_chunks_mut(CHUNK)
+            .enumerate()
+            .for_each(|(block, out)| {
+                let start = block * CHUNK;
+                // Seek the cursors to this chunk. Targets are monotone in `i`,
+                // so from here each one only ever moves forward.
+                let mut cursor = [0usize; 6];
+                for (d, c) in cursor.iter_mut().enumerate() {
+                    let target = linear[start] as i64 + offset[d];
+                    *c = linear.partition_point(|&x| (x as i64) < target);
+                }
+
+                for (k, slot) in out.iter_mut().enumerate() {
+                    let i = start + k;
+                    let l = linear[i] as usize;
+                    let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
+
+                    // Which faces have a neighbour at all. Without this the low
+                    // face of column zero would name the last column of the
+                    // previous row -- a real cell, silently averaged against.
+                    let mut in_grid = 0u8;
+                    for (d, bit) in [
+                        cx > 0,
+                        cx + 1 < nx,
+                        cy > 0,
+                        cy + 1 < ny,
+                        cz > 0,
+                        cz + 1 < nz,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if bit {
+                            in_grid |= 1 << d;
+                        }
+                    }
+
+                    let mask = crossings[i] as usize;
+                    let surface = SURFACE_FACES[mask] & in_grid;
+                    let junction = JUNCTION_FACES[mask] & in_grid;
+                    // A junction cell slides along its junction curve. Seven in
+                    // eight have exactly two junction faces, which is a curve
+                    // entering and leaving; the rest fall back rather than be
+                    // dragged onto a single neighbour.
+                    let use_mask = if params.junction_rule && junction.count_ones() >= 2 {
+                        junction
+                    } else {
+                        surface
+                    };
+
+                    let mut sum = [0.0f32; 3];
+                    let mut count = 0u32;
+                    for (d, c) in cursor.iter_mut().enumerate() {
+                        // Advance every cursor, used or not, or the ones that
+                        // are skipped fall behind and desynchronise.
+                        let target = linear[i] as i64 + offset[d];
+                        while *c < n && (linear[*c] as i64) < target {
+                            *c += 1;
+                        }
+                        if use_mask & (1 << d) == 0 {
+                            continue;
+                        }
+                        if *c < n && linear[*c] as i64 == target {
+                            let p = current[*c];
+                            for a in 0..3 {
+                                sum[a] += p[a];
+                            }
+                            count += 1;
+                        }
+                    }
+
+                    if pinned[i] || count == 0 {
+                        *slot = current[i];
+                        continue;
+                    }
+
+                    let scale = 1.0 / count as f32;
+                    let offsets = &CENTROID[mask];
+                    for a in 0..3 {
+                        let average = sum[a] * scale;
+                        let moved = current[i][a] + step * (average - current[i][a]);
+                        // The cell, and the deviation bound, intersected.
+                        let base = (placed[i][a] - offsets[a]) as f32;
+                        let anchor = placed[i][a] as f32;
+                        let lo = base.max(anchor - limit);
+                        let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+                        slot[a] = moved.clamp(lo, hi);
+                    }
+                }
+            });
+        std::mem::swap(&mut current, &mut next);
+    }
+
+    for (slot, moved) in cells.positions.iter_mut().zip(current.iter()) {
+        for a in 0..3 {
+            slot[a] = moved[a].round() as i32;
+        }
+    }
+}
+
+/// Copy faired cell positions onto every vertex that came from that cell.
+///
+/// After this the two copies of a shared wall are bit-identical, because they
+/// are reads of the same number rather than two independently faired values.
+pub fn scatter(cells: &CellField, mesh: &mut LabelMesh) {
+    for (position, &cell) in mesh.positions.iter_mut().zip(mesh.cells.iter()) {
+        *position = cells.positions[cell as usize];
     }
 }
 
@@ -423,6 +616,326 @@ fn build_adjacency(mesh: &LabelMesh, n: usize, scratch: &mut Scratch) {
     // on a large chunk — to save nothing: a vertex's list is
     // `neighbours[slots[v]..cursor[v]]` either way, and both index arrays are
     // walked in order.
+}
+
+#[cfg(test)]
+mod fairing_tests {
+    use super::*;
+    use crate::extract::{extract_parallel, extract_with, ExtractOptions, Extraction};
+    use crate::grid::VolumeView;
+    use ndarray::Array3;
+    use std::collections::HashMap;
+
+    fn extract(a: &Array3<u32>, close: bool, threads: usize) -> Extraction {
+        let opts = ExtractOptions {
+            mark_boundary: !close,
+            ..Default::default()
+        };
+        let view = VolumeView::new(a.view(), close);
+        if threads == 0 {
+            extract_with(&view, &opts)
+        } else {
+            extract_parallel(&view, &opts, threads)
+        }
+    }
+
+    /// Three labels stacked so cells carry two and three materials at once.
+    fn stacked(n: usize) -> Array3<u32> {
+        Array3::from_shape_fn((n, n, n), |(x, y, z)| {
+            let c = (n - 1) as f64 / 2.0;
+            let r =
+                ((x as f64 - c).powi(2) + (y as f64 - c).powi(2) + (z as f64 - c).powi(2)).sqrt();
+            if r > c * 0.8 {
+                0
+            } else if z * 3 < n {
+                1
+            } else if z * 3 < 2 * n {
+                2
+            } else {
+                3
+            }
+        })
+    }
+
+    fn params() -> Fairing {
+        Fairing {
+            iterations: 6,
+            ..Default::default()
+        }
+    }
+
+    /// The same update, written the slow obvious way: a map from linear index to
+    /// array position, no cursors.
+    ///
+    /// This is the test that earns the cursor sweep. It catches both ways the
+    /// clever version can be wrong — a cursor left behind because its face was
+    /// skipped, and the low face of column zero wrapping onto the last column of
+    /// the previous row.
+    fn fair_reference(cells: &CellField, p: &Fairing, skip_uniform: bool) -> Vec<[i32; 3]> {
+        let n = cells.positions.len();
+        let [nx, ny, nz] = cells.nc;
+        let index: HashMap<u32, usize> = cells
+            .linear
+            .iter()
+            .enumerate()
+            .map(|(i, &l)| (l, i))
+            .collect();
+        let limit = (p.max_deviation * SUBVOXEL as f64) as f32;
+        let step = p.step as f32;
+        let mut current: Vec<[f32; 3]> = cells
+            .positions
+            .iter()
+            .map(|q| [q[0] as f32, q[1] as f32, q[2] as f32])
+            .collect();
+
+        for _ in 0..p.iterations {
+            let mut next = current.clone();
+            for i in 0..n {
+                let l = cells.linear[i] as usize;
+                let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / (nx * ny));
+                let mut in_grid = 0u8;
+                for (d, bit) in [
+                    cx > 0,
+                    cx + 1 < nx,
+                    cy > 0,
+                    cy + 1 < ny,
+                    cz > 0,
+                    cz + 1 < nz,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if bit {
+                        in_grid |= 1 << d;
+                    }
+                }
+                let mask = cells.crossings[i] as usize;
+                // `skip_uniform == false` is Frisken's rule taken literally:
+                // every face neighbour, whether or not a surface passes between
+                // them. Kept so the counterexample below can be run.
+                let surface = if skip_uniform {
+                    SURFACE_FACES[mask] & in_grid
+                } else {
+                    in_grid
+                };
+                let junction = JUNCTION_FACES[mask] & in_grid;
+                let use_mask = if p.junction_rule && junction.count_ones() >= 2 {
+                    junction
+                } else {
+                    surface
+                };
+
+                let mut sum = [0.0f32; 3];
+                let mut count = 0u32;
+                for d in 0..6 {
+                    if use_mask & (1 << d) == 0 {
+                        continue;
+                    }
+                    let target = cells.neighbour_linear(cells.linear[i], d);
+                    if let Some(j) = target.and_then(|t| index.get(&t)) {
+                        for a in 0..3 {
+                            sum[a] += current[*j][a];
+                        }
+                        count += 1;
+                    }
+                }
+                if cells.pinned[i] || count == 0 {
+                    continue;
+                }
+                let scale = 1.0 / count as f32;
+                for a in 0..3 {
+                    let average = sum[a] * scale;
+                    let moved = current[i][a] + step * (average - current[i][a]);
+                    let base = (cells.positions[i][a] - CENTROID[mask][a]) as f32;
+                    let anchor = cells.positions[i][a] as f32;
+                    let lo = base.max(anchor - limit);
+                    let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+                    next[i][a] = moved.clamp(lo, hi);
+                }
+            }
+            current = next;
+        }
+        current
+            .iter()
+            .map(|q| {
+                [
+                    q[0].round() as i32,
+                    q[1].round() as i32,
+                    q[2].round() as i32,
+                ]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_cursor_sweep_matches_a_direct_lookup() {
+        for n in [17usize, 24, 48] {
+            let a = stacked(n);
+            for close in [false, true] {
+                let mut e = extract(&a, close, 0);
+                let want = fair_reference(&e.cells, &params(), true);
+                fair(&mut e.cells, &params());
+                assert_eq!(e.cells.positions, want, "n={n} close={close}");
+            }
+        }
+    }
+
+    /// The reason for all of this: two labels' copies of a shared wall must come
+    /// out bit-identical, because they are reads of one number.
+    #[test]
+    fn shared_walls_do_not_drift() {
+        let a = stacked(32);
+        let mut e = extract(&a, true, 0);
+        fair(&mut e.cells, &params());
+        for mesh in e.meshes.iter_mut() {
+            scatter(&e.cells, mesh);
+        }
+
+        // Group every vertex by the cell it came from, across all labels.
+        let mut by_cell: HashMap<u32, [i32; 3]> = HashMap::new();
+        let mut shared = 0;
+        for mesh in &e.meshes {
+            for (&cell, &position) in mesh.cells.iter().zip(mesh.positions.iter()) {
+                match by_cell.get(&cell) {
+                    None => {
+                        by_cell.insert(cell, position);
+                    }
+                    Some(&first) => {
+                        assert_eq!(first, position, "cell {cell} disagrees between labels");
+                        shared += 1;
+                    }
+                }
+            }
+        }
+        assert!(shared > 0, "no cell was shared, so nothing was tested");
+    }
+
+    fn one_voxel_sheet() -> Array3<u32> {
+        let mut a = Array3::<u32>::zeros((20, 20, 20));
+        a.slice_mut(ndarray::s![10, 4..16, 4..16]).fill(1);
+        a
+    }
+
+    /// The sheet must still have two sides afterwards.
+    #[test]
+    fn a_one_voxel_sheet_survives() {
+        let a = one_voxel_sheet();
+        let mut e = extract(&a, true, 0);
+        let before = spread_x(&e.cells.positions);
+        fair(
+            &mut e.cells,
+            &Fairing {
+                iterations: 80,
+                max_deviation: 10.0, // deliberately no help from the bound
+                ..Default::default()
+            },
+        );
+        let after = spread_x(&e.cells.positions);
+        // It thins -- a thin slab is joined around its rim, so curvature flow
+        // pulls the sides together, and `max_deviation` is deliberately not
+        // helping here. What matters is that it keeps a thickness at all.
+        assert!(
+            after > before * 0.35,
+            "sheet thinned too far: {before} -> {after} fixed-point units across"
+        );
+    }
+
+    /// Why uniform faces are excluded, kept executable so the exclusion cannot
+    /// be quietly removed as a simplification.
+    ///
+    /// Averaging across a face no surface passes through joins the two sides of
+    /// a one-voxel sheet, which are face-adjacent, and they meet in the middle.
+    /// The displacement bound does not save it: the sides start exactly one
+    /// voxel apart, so half of that is within any sane bound.
+    #[test]
+    fn the_literal_stencil_would_collapse_that_sheet() {
+        let a = one_voxel_sheet();
+        let e = extract(&a, true, 0);
+        let p = Fairing {
+            iterations: 80,
+            max_deviation: 10.0,
+            ..Default::default()
+        };
+        let before = spread_x(&e.cells.positions);
+        let literal = fair_reference(&e.cells, &p, false);
+        let ours = fair_reference(&e.cells, &p, true);
+        assert!(
+            spread_x(&literal) < before * 0.05,
+            "expected the literal stencil to collapse the sheet, got {} of {before}",
+            spread_x(&literal)
+        );
+        assert!(
+            spread_x(&ours) > before * 0.35,
+            "skipping uniform faces should have preserved it, got {} of {before}",
+            spread_x(&ours)
+        );
+    }
+
+    fn spread_x(positions: &[[i32; 3]]) -> f32 {
+        let lo = positions.iter().map(|p| p[0]).min().unwrap();
+        let hi = positions.iter().map(|p| p[0]).max().unwrap();
+        (hi - lo) as f32
+    }
+
+    #[test]
+    fn no_vertex_leaves_its_cell_or_the_deviation_bound() {
+        let a = stacked(24);
+        for &max_deviation in &[0.0f64, 0.125, 0.5, 4.0] {
+            let mut e = extract(&a, true, 0);
+            let placed = e.cells.positions.clone();
+            fair(
+                &mut e.cells,
+                &Fairing {
+                    iterations: 40,
+                    max_deviation,
+                    ..Default::default()
+                },
+            );
+            let limit = (max_deviation * SUBVOXEL as f64).round() as i32 + 1;
+            for (i, (before, after)) in placed.iter().zip(e.cells.positions.iter()).enumerate() {
+                let mask = e.cells.crossings[i] as usize;
+                for a in 0..3 {
+                    assert!(
+                        (before[a] - after[a]).abs() <= limit,
+                        "cell {i} axis {a} moved past max_deviation"
+                    );
+                    let base = before[a] - CENTROID[mask][a];
+                    assert!(
+                        after[a] >= base - 1 && after[a] <= base + SUBVOXEL + 1,
+                        "cell {i} axis {a} left its cell: {} not in [{base}, {}]",
+                        after[a],
+                        base + SUBVOXEL
+                    );
+                }
+            }
+        }
+    }
+
+    /// Chunking splits the sweep and each worker re-seeks its own cursors, so
+    /// this is really a test that the seek agrees with the walk.
+    #[test]
+    fn fairing_is_identical_however_the_work_is_split() {
+        let a = stacked(40);
+        let single = {
+            let mut e = extract(&a, false, 1);
+            fair(&mut e.cells, &params());
+            e.cells.positions
+        };
+        for threads in [2usize, 4, 8] {
+            let mut e = extract(&a, false, threads);
+            fair(&mut e.cells, &params());
+            assert_eq!(e.cells.positions, single, "{threads} threads differed");
+        }
+    }
+
+    #[test]
+    fn zero_iterations_changes_nothing() {
+        let a = stacked(16);
+        let mut e = extract(&a, true, 0);
+        let before = e.cells.positions.clone();
+        fair(&mut e.cells, &Fairing::default());
+        assert_eq!(before, e.cells.positions);
+    }
 }
 
 #[cfg(test)]

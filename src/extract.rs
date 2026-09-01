@@ -74,11 +74,45 @@ pub struct CellField {
     pub crossings: Vec<u16>,
     /// Cells in the volume's outermost layer, which fairing must not move.
     pub pinned: Vec<bool>,
+    /// Cell counts along each axis, so [`CellField::linear`] can be decomposed
+    /// and a cell's face neighbours named without consulting the volume.
+    pub nc: [usize; 3],
 }
 
 impl CellField {
     fn len(&self) -> usize {
         self.positions.len()
+    }
+
+    /// Index of the neighbour across face `f`, or `None` when that face is on
+    /// the edge of the cell grid.
+    ///
+    /// Faces are numbered as in [`crate::tables::FACE_EDGES`]: `f / 2` is the
+    /// axis and `f % 2` picks the low or high side.
+    #[inline]
+    pub fn neighbour_linear(&self, linear: u32, f: usize) -> Option<u32> {
+        let (nx, ny) = (self.nc[0], self.nc[1]);
+        let plane = nx * ny;
+        let l = linear as usize;
+        let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
+        let (axis, high) = (f / 2, f % 2 == 1);
+        let (at, limit) = match axis {
+            0 => (cx, nx),
+            1 => (cy, ny),
+            _ => (cz, self.nc[2]),
+        };
+        // Without this the low face of column 0 would name the last column of
+        // the previous row, which is a real cell and would be silently averaged
+        // against.
+        if (high && at + 1 >= limit) || (!high && at == 0) {
+            return None;
+        }
+        let step = match axis {
+            0 => 1,
+            1 => nx,
+            _ => plane,
+        } as i64;
+        Some((linear as i64 + if high { step } else { -step }) as u32)
     }
 
     fn append(&mut self, other: &CellField) {
@@ -369,7 +403,10 @@ fn extract_band<T: Label>(
     let plane = nc[0] * nc[1];
     let mut label_index: FxHashMap<u64, u32> = FxHashMap::default();
     let mut meshes: Vec<LabelMesh> = Vec::new();
-    let mut cells = CellField::default();
+    let mut cells = CellField {
+        nc,
+        ..Default::default()
+    };
 
     // Only the current and previous cell layer are ever needed.
     let mut prev = Slab::new(plane);
@@ -631,7 +668,10 @@ fn merge<T: Label + Sync>(
     // block starts so quad indices can be shifted onto it.
     let mut offsets: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
     let mut local_of: Vec<Vec<u32>> = Vec::with_capacity(bands.len());
-    let mut cells = CellField::default();
+    let mut cells = CellField {
+        nc,
+        ..Default::default()
+    };
     for band in bands.iter_mut() {
         // Bands partition z and cells are visited in scan order, so appending
         // band by band leaves `linear` globally ascending — which is what lets
