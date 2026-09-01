@@ -118,6 +118,66 @@ class Tube:
         return box * p, box * float(np.sqrt(p * (1 - p) / samples))
 
 
+def contour(field, level):
+    """Marching cubes on a continuous field, via VTK's flying edges.
+
+    Points come out in index coordinates -- origin 0, unit spacing -- which is
+    the same convention serra uses, so nothing needs shifting.
+    """
+    import pyvista as pv
+
+    grid = pv.ImageData(dimensions=field.shape, spacing=(1, 1, 1), origin=(0, 0, 0))
+    grid.point_data["f"] = np.asarray(field, np.float32).flatten(order="F")
+    surf = grid.contour([level], scalars="f").triangulate()
+    faces = np.asarray(surf.faces).reshape(-1, 4)[:, 1:]
+    return np.asarray(surf.points, np.float64), faces.astype(np.uint32)
+
+
+def signed_edt(mask):
+    """Signed Euclidean distance, positive inside.
+
+    Marching cubes on a *binary* field always interpolates to the midpoint of a
+    crossed edge, so every vertex lands on a half-voxel lattice however smooth
+    the true surface is. On a distance field the crossing varies continuously
+    and the vertex can land anywhere -- which is the cheapest route to sub-voxel
+    placement from a binary mask, and the idea behind Gibson's distance maps.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    inside = mask.astype(bool)
+    return distance_transform_edt(inside) - distance_transform_edt(~inside)
+
+
+def sign_constrained_blur(mask, iterations=12, sigma=0.8, margin=0.02, bound=0.5):
+    """Gaussian blur of the embedding with the voxel signs pinned.
+
+    This is the obvious thing to reach for, and it is NOT Whitaker's constrained
+    anti-aliasing (VolVis 2000, shipped as ITK's AntiAliasBinaryImageFilter).
+    That method moves the level set under *curvature* flow inside a narrow band;
+    an isotropic Gaussian is a poor stand-in, because on a tube two voxels across
+    it averages right through the object. It is included because the failure is
+    instructive, not as a test of the published method -- see the note in
+    docs/accuracy.md. Do not read the row below as evidence about Whitaker.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    inside = mask.astype(bool)
+    phi = np.where(inside, bound, -bound).astype(np.float64)
+    for _ in range(iterations):
+        phi = gaussian_filter(phi, sigma)
+        # Clamp BOTH ends, not just the sign. Pinning inside voxels to a tiny
+        # positive value while outside voxels keep a large negative one drags
+        # every crossing towards the inside voxel centre -- half a voxel of
+        # inward bias, which is worse than not smoothing. Bounding the magnitude
+        # symmetrically keeps the crossing near where the data put it.
+        phi = np.where(
+            inside,
+            np.clip(phi, margin, bound),
+            np.clip(phi, -bound, -margin),
+        )
+    return phi
+
+
 def sample_surface(vertices, faces, rng, samples):
     """Points spread uniformly over the mesh surface, area-weighted."""
     v = np.asarray(vertices, np.float64)
@@ -364,6 +424,14 @@ def main() -> int:
         truth = tube.inside(points)
 
         variants = [("zmesh (marching cubes)", None)]
+        variants += [(f"volume: {n}", ("field", fn)) for n, fn in [
+            ("marching cubes on binary", lambda m: (m.astype(np.float32), 0.5)),
+            ("gaussian blur, sigma 1", lambda m: (
+                __import__("scipy.ndimage", fromlist=["g"]).gaussian_filter(
+                    m.astype(np.float32), 1.0), 0.5)),
+            ("signed distance field", lambda m: (signed_edt(m), 0.0)),
+            ("gaussian + sign pin (naive)", lambda m: (sign_constrained_blur(m), 0.0)),
+        ]]
         variants += [("serra, no smoothing", {})]
         variants += [
             (f"serra relaxation={k}", dict(relaxation=k)) for k in (1, 3, 5, 10)
@@ -377,7 +445,10 @@ def main() -> int:
         print(f"{'':>26} {'':>9} {'distance from the true surface, voxels':>37}")
         meshes = {}
         for name, kwargs in variants:
-            if kwargs is None:
+            if isinstance(kwargs, tuple):
+                field, level = kwargs[1](labels)
+                v, f = contour(field, level)
+            elif kwargs is None:
                 m = zmesh.Mesher((1, 1, 1))
                 m.mesh(labels, close=True)
                 got = m.get(1)
