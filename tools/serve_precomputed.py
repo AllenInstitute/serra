@@ -64,26 +64,68 @@ IMAGERY = (
 )
 
 
+def cutout_view(root: str):
+    """Where the cutout is, so the link opens on it.
+
+    Once the layers carry their true dataset coordinates they sit a long way
+    from the origin -- around voxel (31872, 23728, 20396) for the MICrONS
+    fixture -- and a link with no position opens somewhere else entirely in a
+    dataset that is 53k voxels across. You then see imagery and no segmentation
+    and reasonably conclude the voxels are missing.
+    """
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name, "info")
+        if not os.path.isfile(path):
+            continue
+        with open(path) as handle:
+            scale = json.load(handle)["scales"][0]
+        offset = scale.get("voxel_offset", [0, 0, 0])
+        size = scale["size"]
+        resolution = scale["resolution"]
+        centre = [offset[k] + size[k] / 2 for k in range(3)]
+        # Neuroglancer reads `position` in the units of `dimensions`, so
+        # declaring them at this layer's own resolution makes the position just
+        # its voxel coordinate.
+        dimensions = {axis: [resolution[k] * 1e-9, "m"] for k, axis in enumerate("xyz")}
+        return dimensions, centre, max(size)
+    return None, None, None
+
+
 def neuroglancer_url(root: str, port: int, imagery: str = IMAGERY) -> str:
     """A link with the imagery and every exported layer already in it."""
     layers = []
     if imagery:
         layers.append({"type": "image", "source": imagery, "name": "em"})
-    for name in sorted(os.listdir(root)):
-        if os.path.isfile(os.path.join(root, name, "info")):
-            layers.append(
-                {
-                    "type": "segmentation",
-                    "source": f"precomputed://http://localhost:{port}/{name}",
-                    "name": name,
-                    # One segmentation on at a time, so toggling compares them
-                    # in place rather than stacking two sets of meshes.
-                    "visible": not any(la["type"] == "segmentation" for la in layers),
-                }
-            )
+    # Baseline first, then the comparisons, so the toggle order reads as an
+    # argument: zmesh, then serra at the same face budget, then what more faces
+    # buy. Alphabetical would open on the unsimplified layer, which is ten times
+    # the data and the wrong thing to look at first.
+    preferred = ["zmesh", "serra_matched", "serra_fairing", "serra_raw"]
+    names = sorted(
+        (n for n in os.listdir(root) if os.path.isfile(os.path.join(root, n, "info"))),
+        key=lambda n: (preferred.index(n) if n in preferred else len(preferred), n),
+    )
+    for name in names:
+        layers.append(
+            {
+                "type": "segmentation",
+                "source": f"precomputed://http://localhost:{port}/{name}",
+                "name": name,
+                # One segmentation on at a time, so toggling compares them in
+                # place rather than stacking two sets of meshes.
+                "visible": not any(la["type"] == "segmentation" for la in layers),
+            }
+        )
     if not any(la["type"] == "segmentation" for la in layers):
         return ""
     state = {"layers": layers, "layout": "4panel"}
+    dimensions, centre, extent = cutout_view(root)
+    if centre is not None:
+        state["dimensions"] = dimensions
+        state["position"] = centre
+        # Frame the cutout rather than the whole dataset.
+        state["crossSectionScale"] = extent / 800.0
+        state["projectionScale"] = extent * 1.5
     return "https://neuroglancer-demo.appspot.com/#!" + urllib.parse.quote(
         json.dumps(state, separators=(",", ":")), safe=""
     )
