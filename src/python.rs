@@ -74,7 +74,7 @@ fn run<'py, T: Label + numpy::Element>(
             // cell. Both copies of a wall become the same number, so they cannot
             // disagree however many iterations run.
             if let Smoothing::Fairing(params) = smoothing {
-                fair(&mut extraction.cells, &params);
+                fair(&mut extraction.cells, &params, threads != 1);
             }
             let cells = &extraction.cells;
             if threads == 1 {
