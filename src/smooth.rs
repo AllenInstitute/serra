@@ -129,6 +129,10 @@ pub enum Smoothing {
     None,
     Laplacian(Relaxation),
     Taubin(Taubin),
+    /// Frisken's fairing, in the cell domain. Handled separately from the other
+    /// two because it runs once over the shared cell field rather than once per
+    /// label; see [`fair`].
+    Fairing(Fairing),
 }
 
 impl Smoothing {
@@ -139,7 +143,13 @@ impl Smoothing {
             Smoothing::None => false,
             Smoothing::Laplacian(r) => r.iterations > 0,
             Smoothing::Taubin(t) => t.iterations > 0,
+            Smoothing::Fairing(f) => f.iterations > 0,
         }
+    }
+
+    /// Whether this runs over the shared cell field rather than per label.
+    pub fn is_cell_domain(&self) -> bool {
+        matches!(self, Smoothing::Fairing(_))
     }
 }
 
@@ -164,6 +174,17 @@ pub struct Fairing {
     pub max_deviation: f64,
     /// Restrict junction cells to their junction neighbours.
     pub junction_rule: bool,
+    /// Alternate Taubin's shrink and unshrink steps instead of repeating
+    /// `step`, with this pass band. `None` is the plain Laplacian.
+    ///
+    /// Worth having because the cell domain and the shrinkage are independent
+    /// problems. Sharing a cell's vertex stops adjacent objects drifting apart;
+    /// it does nothing about volume loss, because Frisken's fairing is a plain
+    /// Laplacian and shrinks exactly as serra's relaxation does. Alternating a
+    /// larger negative step fixes that, and the two compose.
+    pub pass_band: Option<f64>,
+    /// The positive step of the Taubin pair, in (0, 1).
+    pub lambda: f64,
 }
 
 impl Default for Fairing {
@@ -173,6 +194,22 @@ impl Default for Fairing {
             step: 0.5,
             max_deviation: 0.5,
             junction_rule: true,
+            pass_band: None,
+            lambda: 0.63,
+        }
+    }
+}
+
+impl Fairing {
+    /// The steps one iteration cycles through: one for a Laplacian, two for
+    /// Taubin.
+    fn steps(&self) -> Vec<f32> {
+        match self.pass_band {
+            None => vec![self.step as f32],
+            Some(pass_band) => {
+                let mu = 1.0 / (pass_band - 1.0 / self.lambda);
+                vec![self.lambda as f32, mu as f32]
+            }
         }
     }
 }
@@ -212,7 +249,7 @@ pub fn fair(cells: &mut CellField, params: &Fairing) {
     let crossings = &cells.crossings;
     let pinned = &cells.pinned;
     let limit = (params.max_deviation * SUBVOXEL as f64) as f32;
-    let step = params.step as f32;
+    let steps = params.steps();
 
     let mut current: Vec<[f32; 3]> = placed
         .iter()
@@ -225,97 +262,99 @@ pub fn fair(cells: &mut CellField, params: &Fairing) {
     const CHUNK: usize = 1 << 16;
 
     for _ in 0..params.iterations {
-        next.par_chunks_mut(CHUNK)
-            .enumerate()
-            .for_each(|(block, out)| {
-                let start = block * CHUNK;
-                // Seek the cursors to this chunk. Targets are monotone in `i`,
-                // so from here each one only ever moves forward.
-                let mut cursor = [0usize; 6];
-                for (d, c) in cursor.iter_mut().enumerate() {
-                    let target = linear[start] as i64 + offset[d];
-                    *c = linear.partition_point(|&x| (x as i64) < target);
-                }
-
-                for (k, slot) in out.iter_mut().enumerate() {
-                    let i = start + k;
-                    let l = linear[i] as usize;
-                    let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
-
-                    // Which faces have a neighbour at all. Without this the low
-                    // face of column zero would name the last column of the
-                    // previous row -- a real cell, silently averaged against.
-                    let mut in_grid = 0u8;
-                    for (d, bit) in [
-                        cx > 0,
-                        cx + 1 < nx,
-                        cy > 0,
-                        cy + 1 < ny,
-                        cz > 0,
-                        cz + 1 < nz,
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        if bit {
-                            in_grid |= 1 << d;
-                        }
+        for &step in &steps {
+            next.par_chunks_mut(CHUNK)
+                .enumerate()
+                .for_each(|(block, out)| {
+                    let start = block * CHUNK;
+                    // Seek the cursors to this chunk. Targets are monotone in `i`,
+                    // so from here each one only ever moves forward.
+                    let mut cursor = [0usize; 6];
+                    for (d, c) in cursor.iter_mut().enumerate() {
+                        let target = linear[start] as i64 + offset[d];
+                        *c = linear.partition_point(|&x| (x as i64) < target);
                     }
 
-                    let mask = crossings[i] as usize;
-                    let surface = SURFACE_FACES[mask] & in_grid;
-                    let junction = JUNCTION_FACES[mask] & in_grid;
-                    // A junction cell slides along its junction curve. Seven in
-                    // eight have exactly two junction faces, which is a curve
-                    // entering and leaving; the rest fall back rather than be
-                    // dragged onto a single neighbour.
-                    let use_mask = if params.junction_rule && junction.count_ones() >= 2 {
-                        junction
-                    } else {
-                        surface
-                    };
+                    for (k, slot) in out.iter_mut().enumerate() {
+                        let i = start + k;
+                        let l = linear[i] as usize;
+                        let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
 
-                    let mut sum = [0.0f32; 3];
-                    let mut count = 0u32;
-                    for (d, c) in cursor.iter_mut().enumerate() {
-                        // Advance every cursor, used or not, or the ones that
-                        // are skipped fall behind and desynchronise.
-                        let target = linear[i] as i64 + offset[d];
-                        while *c < n && (linear[*c] as i64) < target {
-                            *c += 1;
+                        // Which faces have a neighbour at all. Without this the low
+                        // face of column zero would name the last column of the
+                        // previous row -- a real cell, silently averaged against.
+                        let mut in_grid = 0u8;
+                        for (d, bit) in [
+                            cx > 0,
+                            cx + 1 < nx,
+                            cy > 0,
+                            cy + 1 < ny,
+                            cz > 0,
+                            cz + 1 < nz,
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if bit {
+                                in_grid |= 1 << d;
+                            }
                         }
-                        if use_mask & (1 << d) == 0 {
+
+                        let mask = crossings[i] as usize;
+                        let surface = SURFACE_FACES[mask] & in_grid;
+                        let junction = JUNCTION_FACES[mask] & in_grid;
+                        // A junction cell slides along its junction curve. Seven in
+                        // eight have exactly two junction faces, which is a curve
+                        // entering and leaving; the rest fall back rather than be
+                        // dragged onto a single neighbour.
+                        let use_mask = if params.junction_rule && junction.count_ones() >= 2 {
+                            junction
+                        } else {
+                            surface
+                        };
+
+                        let mut sum = [0.0f32; 3];
+                        let mut count = 0u32;
+                        for (d, c) in cursor.iter_mut().enumerate() {
+                            // Advance every cursor, used or not, or the ones that
+                            // are skipped fall behind and desynchronise.
+                            let target = linear[i] as i64 + offset[d];
+                            while *c < n && (linear[*c] as i64) < target {
+                                *c += 1;
+                            }
+                            if use_mask & (1 << d) == 0 {
+                                continue;
+                            }
+                            if *c < n && linear[*c] as i64 == target {
+                                let p = current[*c];
+                                for a in 0..3 {
+                                    sum[a] += p[a];
+                                }
+                                count += 1;
+                            }
+                        }
+
+                        if pinned[i] || count == 0 {
+                            *slot = current[i];
                             continue;
                         }
-                        if *c < n && linear[*c] as i64 == target {
-                            let p = current[*c];
-                            for a in 0..3 {
-                                sum[a] += p[a];
-                            }
-                            count += 1;
+
+                        let scale = 1.0 / count as f32;
+                        let offsets = &CENTROID[mask];
+                        for a in 0..3 {
+                            let average = sum[a] * scale;
+                            let moved = current[i][a] + step * (average - current[i][a]);
+                            // The cell, and the deviation bound, intersected.
+                            let base = (placed[i][a] - offsets[a]) as f32;
+                            let anchor = placed[i][a] as f32;
+                            let lo = base.max(anchor - limit);
+                            let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+                            slot[a] = moved.clamp(lo, hi);
                         }
                     }
-
-                    if pinned[i] || count == 0 {
-                        *slot = current[i];
-                        continue;
-                    }
-
-                    let scale = 1.0 / count as f32;
-                    let offsets = &CENTROID[mask];
-                    for a in 0..3 {
-                        let average = sum[a] * scale;
-                        let moved = current[i][a] + step * (average - current[i][a]);
-                        // The cell, and the deviation bound, intersected.
-                        let base = (placed[i][a] - offsets[a]) as f32;
-                        let anchor = placed[i][a] as f32;
-                        let lo = base.max(anchor - limit);
-                        let hi = (base + SUBVOXEL as f32).min(anchor + limit);
-                        slot[a] = moved.clamp(lo, hi);
-                    }
-                }
-            });
-        std::mem::swap(&mut current, &mut next);
+                });
+            std::mem::swap(&mut current, &mut next);
+        }
     }
 
     for (slot, moved) in cells.positions.iter_mut().zip(current.iter()) {
@@ -387,6 +426,9 @@ pub fn smooth_with(mesh: &mut LabelMesh, smoothing: &Smoothing, scratch: &mut Sc
             &[p.lambda, p.mu()],
             scratch,
         ),
+        // Ran over the whole cell field before this point; each mesh only has
+        // to read its positions back.
+        Smoothing::Fairing(_) => {}
     }
 }
 

@@ -19,7 +19,7 @@ use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
 use crate::simplify::{simplify, SimplifyOptions};
-use crate::smooth::{smooth_with, Relaxation, Scratch, Smoothing, Taubin};
+use crate::smooth::{fair, scatter, smooth_with, Fairing, Relaxation, Scratch, Smoothing, Taubin};
 
 /// Arrays handed back for one object: vertices, faces, and optionally normals.
 type MeshArrays<'py> = (
@@ -61,7 +61,7 @@ fn run<'py, T: Label + numpy::Element>(
     // there is nothing beyond that layer to be missing, so nothing is pinned
     // and the whole surface is free to smooth.
     let options = ExtractOptions {
-        mark_boundary: smoothing.is_active() && !close,
+        mark_boundary: smoothing.is_active() && (!close || owned_cells.is_some()),
         owned_cells,
     };
 
@@ -69,7 +69,25 @@ fn run<'py, T: Label + numpy::Element>(
     // spells this `detach`) and other threads can run.
     let work = move || {
         let mut extraction = extract_parallel(&VolumeView::new(view, close), &options, threads);
-        if smoothing.is_active() {
+        if smoothing.is_cell_domain() {
+            // One pass over the shared cell field, then every vertex reads its
+            // cell. Both copies of a wall become the same number, so they cannot
+            // disagree however many iterations run.
+            if let Smoothing::Fairing(params) = smoothing {
+                fair(&mut extraction.cells, &params);
+            }
+            let cells = &extraction.cells;
+            if threads == 1 {
+                for mesh in extraction.meshes.iter_mut() {
+                    scatter(cells, mesh);
+                }
+            } else {
+                extraction
+                    .meshes
+                    .par_iter_mut()
+                    .for_each(|mesh| scatter(cells, mesh));
+            }
+        } else if smoothing.is_active() {
             // One scratch buffer per worker, carried across every mesh that
             // worker handles. Smoothing a chunk means smoothing thousands of
             // surfaces, and allocating the adjacency afresh for each one costs
@@ -114,6 +132,12 @@ impl Mesher {
         taubin=0,
         taubin_pass_band=0.1,
         taubin_lambda=0.63,
+        fairing=0,
+        fairing_step=0.5,
+        fairing_junction_rule=true,
+        fairing_taubin=false,
+        fairing_pass_band=0.1,
+        fairing_lambda=0.63,
         threads=0,
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -127,6 +151,12 @@ impl Mesher {
         taubin: u32,
         taubin_pass_band: f64,
         taubin_lambda: f64,
+        fairing: u32,
+        fairing_step: f64,
+        fairing_junction_rule: bool,
+        fairing_taubin: bool,
+        fairing_pass_band: f64,
+        fairing_lambda: f64,
         threads: usize,
     ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
@@ -157,10 +187,18 @@ impl Mesher {
         // Two filters over the same vertices would be a compounding of bounds
         // nobody could reason about, and the answer to "which one" is a
         // decision, not a blend.
-        if relaxation > 0 && taubin > 0 {
+        if [relaxation > 0, taubin > 0, fairing > 0]
+            .iter()
+            .filter(|&&on| on)
+            .count()
+            > 1
+        {
             return Err(PyValueError::new_err(
-                "set either relaxation or taubin, not both",
+                "set only one of relaxation, taubin or fairing",
             ));
+        }
+        if fairing > 0 && (!fairing_step.is_finite() || fairing_step <= 0.0 || fairing_step > 1.0) {
+            return Err(PyValueError::new_err("fairing_step must lie in (0, 1]"));
         }
         let taubin_params = Taubin {
             iterations: taubin,
@@ -176,7 +214,20 @@ impl Mesher {
                 taubin_params.mu()
             )));
         }
-        let smoothing = if taubin > 0 {
+        let smoothing = if fairing > 0 {
+            Smoothing::Fairing(Fairing {
+                iterations: fairing,
+                step: fairing_step,
+                max_deviation,
+                junction_rule: fairing_junction_rule,
+                pass_band: if fairing_taubin {
+                    Some(fairing_pass_band)
+                } else {
+                    None
+                },
+                lambda: fairing_lambda,
+            })
+        } else if taubin > 0 {
             Smoothing::Taubin(taubin_params)
         } else {
             Smoothing::Laplacian(Relaxation {

@@ -221,9 +221,18 @@ def test_zero_iterations_changes_nothing():
     assert np.array_equal(smoothed(mask).vertices, smoothed(mask, taubin=0).vertices)
 
 
-def test_the_two_filters_are_mutually_exclusive():
-    with pytest.raises(ValueError, match="either relaxation or taubin"):
-        serra_mesh.Mesher(relaxation=3, taubin=3)
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"relaxation": 3, "taubin": 3},
+        {"relaxation": 3, "fairing": 3},
+        {"taubin": 3, "fairing": 3},
+        {"relaxation": 3, "taubin": 3, "fairing": 3},
+    ],
+)
+def test_the_filters_are_mutually_exclusive(kwargs):
+    with pytest.raises(ValueError, match="only one of relaxation, taubin or fairing"):
+        serra_mesh.Mesher(**kwargs)
 
 
 @pytest.mark.parametrize(
