@@ -424,14 +424,26 @@ def main() -> int:
         truth = tube.inside(points)
 
         variants = [("zmesh (marching cubes)", None)]
-        variants += [(f"volume: {n}", ("field", fn)) for n, fn in [
-            ("marching cubes on binary", lambda m: (m.astype(np.float32), 0.5)),
-            ("gaussian blur, sigma 1", lambda m: (
-                __import__("scipy.ndimage", fromlist=["g"]).gaussian_filter(
-                    m.astype(np.float32), 1.0), 0.5)),
-            ("signed distance field", lambda m: (signed_edt(m), 0.0)),
-            ("gaussian + sign pin (naive)", lambda m: (sign_constrained_blur(m), 0.0)),
-        ]]
+        variants += [
+            (f"volume: {n}", ("field", fn))
+            for n, fn in [
+                ("marching cubes on binary", lambda m: (m.astype(np.float32), 0.5)),
+                (
+                    "gaussian blur, sigma 1",
+                    lambda m: (
+                        __import__("scipy.ndimage", fromlist=["g"]).gaussian_filter(
+                            m.astype(np.float32), 1.0
+                        ),
+                        0.5,
+                    ),
+                ),
+                ("signed distance field", lambda m: (signed_edt(m), 0.0)),
+                (
+                    "gaussian + sign pin (naive)",
+                    lambda m: (sign_constrained_blur(m), 0.0),
+                ),
+            ]
+        ]
         variants += [("serra, no smoothing", {})]
         variants += [
             (f"serra relaxation={k}", dict(relaxation=k)) for k in (1, 3, 5, 10)
