@@ -78,11 +78,18 @@ def encode(vertices: np.ndarray, faces: np.ndarray, shift_nm) -> bytes:
     return struct.pack("<I", len(v)) + v.tobytes() + f.tobytes()
 
 
-def write_meshes(meshes, path: str, shift_nm) -> int:
-    """One manifest and one fragment per segment. Returns bytes written."""
+def write_meshes(meshes, path: str, shift_nm):
+    """One manifest and one fragment per segment, written as they arrive.
+
+    Streamed rather than collected first. At 512^3 the unsimplified layers run
+    to 180 million faces, and holding every mesh in a list before writing adds
+    several gigabytes to peak memory for no reason.
+
+    Returns (count, faces, bytes).
+    """
     directory = os.path.join(path, "mesh")
     os.makedirs(directory, exist_ok=True)
-    total = 0
+    count = faces = total = 0
     for label, mesh in meshes:
         fragment = f"{label}:0:1"
         blob = encode(mesh.vertices, mesh.faces, shift_nm)
@@ -90,8 +97,10 @@ def write_meshes(meshes, path: str, shift_nm) -> int:
             handle.write(blob)
         with open(os.path.join(directory, f"{label}:0"), "w") as handle:
             json.dump({"fragments": [fragment]}, handle)
+        count += 1
+        faces += len(mesh.faces)
         total += len(blob)
-    return total
+    return count, faces, total
 
 
 def mesh_with_zmesh(labels, resolution, args):
@@ -101,24 +110,39 @@ def mesh_with_zmesh(labels, resolution, args):
 
     mesher = zmesh.Mesher(resolution)
     mesher.mesh(labels, close=False)
+    counts = {}
     for label in mesher.ids():
         got = mesher.get(
             label,
             reduction_factor=args.reduction_factor,
             max_error=args.max_error,
         )
+        counts[int(label)] = len(got.faces)
         if len(got.faces):
             yield int(label), got
+    # Hand the face counts to `serra_matched` so it does not repeat this pass.
+    _ZMESH_TARGETS[(labels.shape, args.reduction_factor, args.max_error)] = counts
+
+
+_ZMESH_TARGETS: dict = {}
 
 
 def zmesh_face_counts(labels, resolution, args):
-    """How many faces zmesh spends on each object, at igneous' settings."""
+    """How many faces zmesh spends on each object, at igneous' settings.
+
+    Cached, because `serra_matched` needs the same numbers the `zmesh` variant
+    already computed and this is the slowest thing in the export -- at 512^3 it
+    is minutes, and running it twice doubled the whole job.
+    """
+    key = (labels.shape, args.reduction_factor, args.max_error)
+    if key in _ZMESH_TARGETS:
+        return _ZMESH_TARGETS[key]
     sys.path.insert(0, args.zmesh)
     import zmesh
 
     mesher = zmesh.Mesher(resolution)
     mesher.mesh(labels, close=False)
-    return {
+    counts = {
         int(label): len(
             mesher.get(
                 label,
@@ -128,6 +152,8 @@ def zmesh_face_counts(labels, resolution, args):
         )
         for label in mesher.ids()
     }
+    _ZMESH_TARGETS[key] = counts
+    return counts
 
 
 def mesh_with_serra_matched(labels, resolution, args, **kwargs):
@@ -173,9 +199,27 @@ def mesh_with_serra(labels, resolution, args, **kwargs):
             yield int(label), got
 
 
+def mesh_with_zmesh_raw(labels, resolution, args):
+    """Marching cubes with nothing done to it, staircase and all."""
+    sys.path.insert(0, args.zmesh)
+    import zmesh
+
+    mesher = zmesh.Mesher(resolution)
+    mesher.mesh(labels, close=False)
+    for label in mesher.ids():
+        got = mesher.get(int(label))
+        if len(got.faces):
+            yield int(label), got
+
+
 VARIANTS = {
+    "zmesh_raw": (
+        "marching cubes, no simplification -- the staircase as extracted",
+        mesh_with_zmesh_raw,
+        {},
+    ),
     "zmesh": (
-        "marching cubes, simplified 100x at 40 nm as igneous does",
+        "marching cubes, simplified as igneous and PyChunkedGraph do",
         mesh_with_zmesh,
         {},
     ),
@@ -210,11 +254,11 @@ def main() -> int:
     parser.add_argument(
         "--variant",
         nargs="*",
-        default=["zmesh", "serra_fairing", "serra_matched"],
+        default=["zmesh_raw", "zmesh", "serra_matched", "serra_fairing"],
         choices=sorted(VARIANTS),
     )
     parser.add_argument("--min-voxels", type=int, default=0)
-    parser.add_argument("--reduction-factor", type=int, default=100)
+    parser.add_argument("--reduction-factor", type=int, default=10)
     parser.add_argument("--max-error", type=float, default=40.0)
     parser.add_argument("--zmesh", default="/Users/forrestc/ConnectomeStack/zmesh")
     parser.add_argument("--resolution", type=int, nargs=3, default=list(RESOLUTION))
@@ -290,16 +334,13 @@ def main() -> int:
         write_volume(labels, path, args.resolution, corner)
         volume_done = time.perf_counter()
 
-        produced = list(mesher(labels, tuple(args.resolution), args))
-        meshed = time.perf_counter()
-        written = write_meshes(produced, path, shift_nm)
+        count, faces, written = write_meshes(
+            mesher(labels, tuple(args.resolution), args), path, shift_nm
+        )
         done = time.perf_counter()
-
-        faces = sum(len(m.faces) for _, m in produced)
         print(
-            f"  {len(produced):,} meshes, {faces:,} faces, {written / 1e6:.1f} MB\n"
-            f"  volume {volume_done - start:.1f}s, mesh {meshed - volume_done:.1f}s, "
-            f"write {done - meshed:.1f}s"
+            f"  {count:,} meshes, {faces:,} faces, {written / 1e6:.1f} MB\n"
+            f"  volume {volume_done - start:.1f}s, mesh+write {done - volume_done:.1f}s"
         )
 
     print(f"\nwrote {args.out}/. Serve it with:\n    python tools/serve_precomputed.py")

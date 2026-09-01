@@ -100,7 +100,7 @@ def neuroglancer_url(root: str, port: int, imagery: str = IMAGERY) -> str:
     # argument: zmesh, then serra at the same face budget, then what more faces
     # buy. Alphabetical would open on the unsimplified layer, which is ten times
     # the data and the wrong thing to look at first.
-    preferred = ["zmesh", "serra_matched", "serra_fairing", "serra_raw"]
+    preferred = ["zmesh_raw", "zmesh", "serra_matched", "serra_fairing", "serra_raw"]
     names = sorted(
         (n for n in os.listdir(root) if os.path.isfile(os.path.join(root, n, "info"))),
         key=lambda n: (preferred.index(n) if n in preferred else len(preferred), n),
