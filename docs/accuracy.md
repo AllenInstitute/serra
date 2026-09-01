@@ -123,6 +123,74 @@ python bench/download_microns.py --survey   # re-run the region search
 python bench/validate_winding.py
 ```
 
+## When the voxels are not the truth
+
+Every number above treats the array being meshed as ground truth. In a
+connectomics pipeline it usually is not. MICrONS is segmented at 8×8×40 nm and
+meshed at 32×32×40 for speed and memory, so serra sees a 4×4×1 **downsample** of
+a segmentation that already locates the boundary four times more precisely in x
+and y.
+
+That changes what smoothing is for. Against the coarse voxels, relaxation "loses
+volume" and looks like damage. Against the fine segmentation the coarse array
+was made from, the same displacement might instead be *recovering* the boundary
+that downsampling discarded. `bench/resolution_fidelity.py` settles it by
+fetching both resolutions of the same box.
+
+Segment `864691136144674612`, a 5 µm cube: 135,555 coarse voxels against
+2,172,904 fine ones. The served coarse array agrees with a majority downsample of
+the fine one on 99.74% of voxels, so this is measuring serra and not the
+downsampler. Agreement is scored by sampling a million points, asking the fine
+segmentation whether each is inside, and asking the coarse mesh the same with a
+winding number — every row scored on identical points, since the differences are
+fractions of a percent.
+
+| mesh | faces | volume vs fine | IoU | too big | too small |
+| --- | --- | --- | --- | --- | --- |
+| no smoothing | 99,128 | −0.95% | 94.073% | 2.70% | 3.39% |
+| `relaxation=1` | 99,128 | −1.29% | 94.040% | 2.58% | 3.53% |
+| `relaxation=3` | 99,128 | −1.95% | 93.885% | 2.37% | 3.89% |
+| `relaxation=10` | 99,128 | −3.96% | **92.860%** | 1.89% | 5.39% |
+| `taubin=3` | 99,128 | −0.88% | 94.085% | 2.73% | 3.35% |
+| `taubin=20` | 99,128 | −0.50% | 94.105% | 2.85% | 3.21% |
+| **coarse topology, fine placement** | 99,128 | −0.66% | **98.341%** | 0.58% | 1.09% |
+| fine mesh, decimated 9× | 101,560 | −0.21% | 99.926% | 0.02% | 0.05% |
+| fine mesh (the ceiling) | 914,048 | −0.16% | 100% | — | — |
+
+**Smoothing does not recover the fine boundary.** Taubin is neutral — 0.03
+points of a 5.93-point gap, inside the sampling noise. Laplacian relaxation is
+actively worse, and the mechanism is visible in the last two columns: it trades
+a small reduction in over-inclusion for a larger increase in under-inclusion. It
+is shrinking past the true surface, not converging on it. Mean distance to the
+fine surface goes the same way, 8.2 nm unsmoothed to 10.3 nm at
+`relaxation=10`. So the volume loss reported elsewhere on this page is real
+error, not a correction.
+
+**The triangle budget is not what costs you.** The fine mesh decimated to the
+same face count as the coarse one reaches 99.93%. All of the 5.9-point deficit
+is the 32 nm sampling; none of it is the mesh being too coarse to represent the
+shape.
+
+**What does work is placing the coarse vertices from fine data.** Keeping the
+coarse topology exactly — same connectivity, same 99,128 faces, same mesh memory
+— and moving each vertex onto the fine surface, clamped to its own cell as
+serra's placement already guarantees, recovers **4.27 of the 5.93 points**, 72%
+of the gap. Mean distance to the fine surface falls from 8.2 nm to 0.1 nm.
+
+!!! note "What this prototype does and does not show"
+
+    It projects onto a fine mesh built from the whole fine array, so it
+    demonstrates the *value* of fine-resolution placement, not a cheap way to
+    get it. A real implementation would read the fine array a slab at a time and
+    compute each coarse cell's vertex from the fine occupancy inside it —
+    `cell_vertex` is already a per-cell function of the corner labels, so the
+    change is confined to placement and leaves topology, seams and chunking
+    alone. Peak memory would be one fine slab rather than one coarse slab, not
+    the whole fine volume.
+
+    Measured on one segment. It should be repeated across object sizes and on a
+    cell body before anything is built on it.
+
 ## Two smoothing filters
 
 `relaxation=k` is Frisken's constrained Laplacian fairing: each pass moves a
