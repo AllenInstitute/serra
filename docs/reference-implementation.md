@@ -1,4 +1,4 @@
-# Against Frisken's reference implementation
+# Against other SurfaceNets implementations
 
 serra cites Frisken (2022) as the method it implements, and the paper's author
 publishes a C++ implementation alongside it:
@@ -166,6 +166,79 @@ The `EdgeVertex` junction rule — averaging only over `JunctionFace` neighbours
 so junction vertices slide along the junction curve — is likewise present in
 both, and serra's `fairing_junction_rule` is the same rule.
 
+## Against VTK's vtkSurfaceNets3D
+
+VTK ships its own SurfaceNets, `vtkSurfaceNets3D`, from the same Frisken
+lineage, reachable from Python as
+[`ImageData.contour_labels`](https://docs.pyvista.org/api/core/_autosummary/pyvista.imagedatafilters.contour_labels).
+It is a far closer comparison than zmesh: one pass over the volume, every
+material at once, dual vertices inside cells.
+
+Two settings decide whether the comparison means anything. pyvista's
+`boundary_style` defaults to `"external"`, which returns only the outside of
+the foreground and skips every wall between adjacent objects — on this volume
+that is a third of the faces. And `smoothing` defaults **on** at 16 iterations.
+Both are set explicitly below.
+
+### The two agree exactly
+
+With serra's `close=True` matching VTK's `pad_background=True`, the two produce
+the same mesh on the 512³ neuropil volume:
+
+| | objects | vertices | faces |
+| --- | --- | --- | --- |
+| serra, `close=True` | 2523 | 46.5M | 93.1M |
+| VTK, `boundary_style="all"` | 2523 | 46.5M | 93.1M |
+
+Not close — equal, and equal again at 128³ (156 objects, 1,831,136 faces each).
+On a single sphere both give 3038 vertices and 6072 triangles enclosing exactly
+8255.0 units of volume for 8255 voxels. Frisken's own C++ agrees on all three
+figures too, which is the strongest evidence available that the method is being
+implemented correctly in all three places.
+
+### Performance
+
+512³, 2524 labels, Apple M4 Pro, one process each. **VTK's PyPI wheel ships the
+`Sequential` SMP backend**, so `vtkSurfaceNets3D` runs single-threaded whatever
+it is asked for — the middle column is the like-for-like one.
+
+| | serra (1 thread) | VTK (1 thread) | serra (14 threads) |
+| --- | --- | --- | --- |
+| traverse the volume | **1.96 s** | 3.5 s | **0.45 s** |
+| smoothing, 20 sweeps | 10.5 s | **4.2 s** | 2.2 s |
+| one indexed mesh per object | **1.03 s** | 16.9 s | 1.01 s |
+| peak RSS, traversal only | **2.7 GB** | 7–10 GB | 4.1 GB |
+
+Three things worth reading off that table honestly.
+
+**VTK's traversal is 1.8× slower than serra's on one thread**, and serra's
+threading widens it to 7.8×. But VTK's is not a Python-overhead artifact:
+converting the numpy array into `vtkImageData` is free on an F-contiguous
+volume, and the 3.5 s is time inside the C++ filter. Wiring the C++ up directly
+would not change it.
+
+**VTK's smoothing is about 2.5× faster than serra's fairing per sweep** — 0.21 s
+against 0.52 s over a comparable number of points. serra's Jacobi update needs
+a second buffer where VTK's does not, which is the price of output that is
+byte-identical however the volume is split across threads.
+
+**Peak memory is the largest gap, 3–4×.** VTK holds the whole volume as one
+polydata — 23.8M points and 51.8M faces before the per-object split — and
+serra's peak is both lower and far more repeatable, 2.7 GB against a figure
+that moved between 6.6 and 9.9 GB across runs.
+
+### VTK does not give you per-object meshes
+
+`vtkSurfaceNets3D` returns one polydata for the whole volume, with a
+two-component `boundary_labels` cell array naming the materials either side of
+each face. Each shared wall is stored once. A connectomics pipeline needs the
+opposite — one indexed mesh per segment, each wall present in both neighbours —
+and VTK has no filter for that, so the 16.9 s above is `bench/compare_zmesh.py`
+doing it in numpy, bucketed in a single pass rather than filtered once per
+label. A C++ implementation would beat it comfortably. The point is not that
+16.9 s is VTK's number; it is that the step exists at all, and that serra's
+1.03 s already includes it.
+
 ## Reproducing
 
 ```bash
@@ -178,4 +251,8 @@ python bench/compare_zmesh.py frisken --relax 20 \
 python bench/compare_zmesh.py serra --threads 1 --fairing 20
 python bench/compare_zmesh.py serra --fairing 20 --fairing-taubin
 python bench/compare_zmesh.py zmesh
+
+python bench/compare_zmesh.py vtk                     # boundary_style=all
+python bench/compare_zmesh.py vtk --smoothing-iterations 20
+python bench/compare_zmesh.py serra --threads 1 --close   # matches VTK exactly
 ```

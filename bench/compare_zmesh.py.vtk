@@ -1,0 +1,32 @@
+def split_by_label(points, triangles, boundary_labels, background=0):
+    """Partition VTK's single output mesh into one indexed mesh per label.
+
+    vtkSurfaceNets3D returns the whole volume as one polydata, with a
+    two-component `boundary_labels` cell array naming the materials on either
+    side of each face. serra returns one mesh per object, and a connectomics
+    pipeline needs the latter -- one file per segment -- so this is real work,
+    not an artificial step added to slow VTK down.
+
+    Bucketed in a single pass rather than filtered once per label. The naive
+    version rescans every face for every label, which is the O(labels x faces)
+    trap, and comparing against that would flatter serra for no reason.
+    """
+    n = len(triangles)
+    label = boundary_labels.ravel()
+    cell = np.repeat(np.arange(n, dtype=np.int64), 2)
+    keep = label != background
+    label, cell = label[keep], cell[keep]
+
+    order = np.argsort(label, kind="stable")
+    label, cell = label[order], cell[order]
+    ids, starts = np.unique(label, return_index=True)
+    bounds = np.append(starts, len(label))
+
+    meshes = {}
+    for k, ident in enumerate(ids):
+        tris = triangles[cell[bounds[k] : bounds[k + 1]]]
+        # Renumber to this object's own vertices, which is what makes the
+        # result an indexed mesh rather than a slice of a global one.
+        used, inverse = np.unique(tris, return_inverse=True)
+        meshes[int(ident)] = (points[used], inverse.reshape(tris.shape))
+    return meshes
