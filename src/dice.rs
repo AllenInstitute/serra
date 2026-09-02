@@ -69,6 +69,22 @@ pub struct DiceOptions {
     /// it, so a vertex sitting exactly on the far boundary of the last cell
     /// stays in that cell instead of starting a new one.
     pub grid_size: [i64; 3],
+    /// Emit vertices already on the octree format's integer lattice, as
+    /// integers in `[0, 2^bits - 1]` measured across the cell they belong to.
+    ///
+    /// This is the same place `to_stored_model_space` would put them, arrived at
+    /// one step earlier — and that matters for more than saving a pass. Two
+    /// cells sharing a vertex agree on it here only as closely as float32 can
+    /// represent it, and at coordinates of a thousand voxels one float32 step is
+    /// about a nanometre. Rounding onto the lattice *before* vertices are shared
+    /// within a cell collapses that difference instead of preserving it, so the
+    /// fragments agree exactly rather than very nearly.
+    ///
+    /// The rounding is done on a single grid spanning the whole volume and the
+    /// cell's own offset subtracted afterwards, so the value a shared vertex
+    /// gets in one cell and in its neighbour come from the same arithmetic:
+    /// `Q` in the lower cell and `0` in the upper one, exactly.
+    pub quantization_bits: Option<u32>,
 }
 
 /// Which side of a plane a vertex lies on. `On` is exact equality.
@@ -160,6 +176,13 @@ pub fn dice(mesh: &TriangleMesh, options: &DiceOptions) -> Vec<DicedCell> {
         (raw.floor() as i64).clamp(0, limit[axis])
     };
 
+    // The lattice, if one was asked for: `step` converts a coordinate to a
+    // global lattice index and `span` is how many of those a cell covers.
+    let lattice = options.quantization_bits.map(|bits| {
+        let span = ((1u64 << bits) - 1) as f64;
+        (span, options.chunk_shape.map(|cs| span / cs))
+    });
+
     let mut pieces: Vec<Piece> = Vec::with_capacity(8);
     let mut next: Vec<Piece> = Vec::with_capacity(8);
     let mut scratch: Vec<[f64; 3]> = Vec::with_capacity(8);
@@ -182,7 +205,7 @@ pub fn dice(mesh: &TriangleMesh, options: &DiceOptions) -> Vec<DicedCell> {
 
         // The common case by a wide margin: the triangle is inside one cell.
         if lo == hi {
-            emit(&mut buckets, lo, &corners);
+            emit(&mut buckets, lo, &corners, &options.grid_origin, lattice);
             continue;
         }
 
@@ -249,6 +272,8 @@ pub fn dice(mesh: &TriangleMesh, options: &DiceOptions) -> Vec<DicedCell> {
                     &mut buckets,
                     piece.index,
                     &[piece.points[0], piece.points[i], piece.points[i + 1]],
+                    &options.grid_origin,
+                    lattice,
                 );
             }
         }
@@ -272,11 +297,33 @@ fn to_f64(v: &[f32; 3]) -> [f64; 3] {
 }
 
 /// Add one triangle to a cell, sharing vertices within that cell.
-fn emit(buckets: &mut FxHashMap<[i64; 3], Bucket>, index: [i64; 3], triangle: &[[f64; 3]; 3]) {
+fn emit(
+    buckets: &mut FxHashMap<[i64; 3], Bucket>,
+    index: [i64; 3],
+    triangle: &[[f64; 3]; 3],
+    grid_origin: &[f64; 3],
+    lattice: Option<(f64, [f64; 3])>,
+) {
     let mut corner = [[0.0f32; 3]; 3];
-    for i in 0..3 {
-        for k in 0..3 {
-            corner[i][k] = triangle[i][k] as f32;
+    match lattice {
+        None => {
+            for i in 0..3 {
+                for k in 0..3 {
+                    corner[i][k] = triangle[i][k] as f32;
+                }
+            }
+        }
+        Some((span, step)) => {
+            // Round on the grid spanning the whole volume, then subtract this
+            // cell's offset, so a shared vertex comes out of identical
+            // arithmetic on both sides of the plane between two cells.
+            for i in 0..3 {
+                for k in 0..3 {
+                    let global = ((triangle[i][k] - grid_origin[k]) * step[k]).round();
+                    let local = global - index[k] as f64 * span;
+                    corner[i][k] = local.clamp(0.0, span) as f32;
+                }
+            }
         }
     }
     // A triangle that lost two of its corners to rounding encloses nothing.
@@ -337,6 +384,7 @@ mod tests {
             chunk_shape: [chunk; 3],
             grid_origin: [0.0; 3],
             grid_size: [size, size, 1],
+            quantization_bits: None,
         }
     }
 
@@ -419,6 +467,73 @@ mod tests {
         let got = open_edges(&vertices, &faces);
         assert!(
             (got - expected).abs() < 1e-9,
+            "open boundary length {got} != {expected}"
+        );
+    }
+
+    #[test]
+    fn the_lattice_makes_neighbours_agree_exactly() {
+        // On the lattice, a vertex two cells share must come out as the top of
+        // one cell's range and the bottom of the next's, exactly -- that is what
+        // makes the fragments weld with no tolerance at all.
+        let mut options = options(1.5, 3);
+        options.quantization_bits = Some(16);
+        let span = ((1u64 << 16) - 1) as f32;
+
+        let cells = dice(&quad_mesh(), &options);
+        assert!(cells.len() > 1);
+        let mut seam_pairs = 0;
+        for cell in &cells {
+            for v in &cell.vertices {
+                for k in 0..3 {
+                    // every coordinate is an integer in range
+                    assert_eq!(v[k], v[k].round(), "{:?} is not on the lattice", v);
+                    assert!(v[k] >= 0.0 && v[k] <= span, "{:?} out of range", v);
+                    if v[k] == 0.0 || v[k] == span {
+                        seam_pairs += 1;
+                    }
+                }
+            }
+        }
+        assert!(seam_pairs > 0, "expected vertices on the cell faces");
+    }
+
+    #[test]
+    fn the_lattice_union_is_still_watertight() {
+        let mesh = quad_mesh();
+        let expected = open_edges(&mesh.vertices, &mesh.faces);
+        let mut options = options(1.5, 3);
+        options.quantization_bits = Some(16);
+        let cells = dice(&mesh, &options);
+
+        // Put every fragment back into world coordinates before welding.
+        let span = ((1u64 << 16) - 1) as f64;
+        let mut vertices: Vec<[f32; 3]> = Vec::new();
+        let mut faces: Vec<[u32; 3]> = Vec::new();
+        let mut index: FxHashMap<[u32; 3], u32> = FxHashMap::default();
+        for cell in &cells {
+            for f in &cell.faces {
+                let mut nf = [0u32; 3];
+                for i in 0..3 {
+                    let stored = cell.vertices[f[i] as usize];
+                    let mut world = [0.0f32; 3];
+                    for k in 0..3 {
+                        let global = stored[k] as f64 + cell.index[k] as f64 * span;
+                        world[k] = (options.grid_origin[k] + global / span * options.chunk_shape[k])
+                            as f32;
+                    }
+                    let key = [world[0].to_bits(), world[1].to_bits(), world[2].to_bits()];
+                    nf[i] = *index.entry(key).or_insert_with(|| {
+                        vertices.push(world);
+                        (vertices.len() - 1) as u32
+                    });
+                }
+                faces.push(nf);
+            }
+        }
+        let got = open_edges(&vertices, &faces);
+        assert!(
+            (got - expected).abs() < 1e-3,
             "open boundary length {got} != {expected}"
         );
     }

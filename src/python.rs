@@ -451,8 +451,12 @@ fn to_arrays(py: Python<'_>, m: TriangleMesh) -> MeshArrays<'_> {
 /// Every triangle lands in exactly one cell, wholly inside it, and two cells
 /// that meet agree on the geometry between them bit for bit — see
 /// [`crate::dice`] for why that needs no tolerance.
+///
+/// With `quantization_bits`, vertices come back on the octree format's integer
+/// lattice instead of in the mesh's own coordinates.
 #[pyfunction]
-#[pyo3(signature = (vertices, faces, chunk_shape, grid_origin, grid_size))]
+#[pyo3(signature = (vertices, faces, chunk_shape, grid_origin, grid_size,
+                    quantization_bits=None))]
 fn dice<'py>(
     py: Python<'py>,
     vertices: PyReadonlyArray2<'py, f32>,
@@ -460,6 +464,7 @@ fn dice<'py>(
     chunk_shape: [f64; 3],
     grid_origin: [f64; 3],
     grid_size: [i64; 3],
+    quantization_bits: Option<u32>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let v = vertices.as_array();
     let f = faces.as_array();
@@ -509,10 +514,20 @@ fn dice<'py>(
         pinned: Vec::new(),
     };
 
+    if let Some(bits) = quantization_bits {
+        if bits == 0 || bits > 24 {
+            return Err(PyValueError::new_err(
+                "quantization_bits must be between 1 and 24; above that the \
+                 integers stop being exact in float32",
+            ));
+        }
+    }
+
     let options = DiceOptions {
         chunk_shape,
         grid_origin,
         grid_size,
+        quantization_bits,
     };
     let cells = py.detach(move || dice_mesh(&mesh, &options));
 

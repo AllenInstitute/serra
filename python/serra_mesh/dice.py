@@ -17,6 +17,7 @@ def dice(
     chunk_shape: Sequence[float],
     grid_origin: Optional[Sequence[float]] = None,
     grid_size: Optional[Sequence[int]] = None,
+    quantization_bits: Optional[int] = None,
 ) -> Dict[Tuple[int, int, int], Mesh]:
     """Cut ``mesh`` into the cells of a regular grid.
 
@@ -44,6 +45,21 @@ def dice(
         it, so a vertex lying exactly on the far face of the last cell stays in
         that cell rather than starting a new one. Defaults to whatever covers
         the mesh.
+    quantization_bits:
+        Return vertices on the octree format's integer lattice -- integers in
+        ``[0, 2**bits - 1]`` across the cell that holds them -- rather than in
+        the mesh's own coordinates. This is where
+        ``cloudvolume.to_stored_model_space`` would put them, so a caller
+        writing the multi-resolution format can skip that step.
+
+        It also makes the fragments agree *exactly* rather than very nearly.
+        Two cells sharing a vertex otherwise agree only as closely as float32
+        can represent it, and at coordinates of a thousand voxels one float32
+        step is about a nanometre; rounding onto the lattice before vertices
+        are shared within a cell collapses that difference instead of keeping
+        it. The rounding uses one grid spanning the whole volume with the
+        cell's offset subtracted afterwards, so a shared vertex comes out as
+        ``2**bits - 1`` in the lower cell and ``0`` in the upper one, exactly.
 
     Notes
     -----
@@ -107,6 +123,7 @@ def dice(
         [float(v) for v in chunk_shape],
         [float(v) for v in grid_origin],
         [int(v) for v in grid_size],
+        None if quantization_bits is None else int(quantization_bits),
     )
     label = getattr(mesh, "id", None)
     return {
