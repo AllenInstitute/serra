@@ -14,3 +14,6 @@ site/
 precomputed/**
 # Locally exported precomputed datastores; regenerate with tools/export_precomputed.py
 /precomputed/
+
+# Frisken reference benchmark: built from a clone outside the repo
+bench/frisken/build/
