@@ -14,6 +14,9 @@ Documentation at [https://alleninstitute.github.io/serra/]
 pip install serra-mesh
 ```
 
+Building from source needs a Rust toolchain: see the
+[developer guide](https://alleninstitute.github.io/serra/developer/#building-from-source).
+
 ```python
 import serra_mesh
 
