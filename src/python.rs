@@ -9,11 +9,13 @@
 //! .pyx by hand.)
 
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray3};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use rayon::prelude::*;
 
+use crate::dice::{dice as dice_mesh, DiceOptions};
 use crate::extract::{extract_parallel, ExtractOptions, Extraction};
 use crate::grid::{Label, VolumeView};
 use crate::mesh::{build, MeshOptions, TriangleMesh};
@@ -443,7 +445,98 @@ fn to_arrays(py: Python<'_>, m: TriangleMesh) -> MeshArrays<'_> {
     (vertices.into_pyarray(py), faces.into_pyarray(py), normals)
 }
 
+/// Cut a mesh into the cells of a regular grid.
+///
+/// Returns `{(i, j, k): (vertices, faces)}` for the cells that hold anything.
+/// Every triangle lands in exactly one cell, wholly inside it, and two cells
+/// that meet agree on the geometry between them bit for bit — see
+/// [`crate::dice`] for why that needs no tolerance.
+#[pyfunction]
+#[pyo3(signature = (vertices, faces, chunk_shape, grid_origin, grid_size))]
+fn dice<'py>(
+    py: Python<'py>,
+    vertices: PyReadonlyArray2<'py, f32>,
+    faces: PyReadonlyArray2<'py, u32>,
+    chunk_shape: [f64; 3],
+    grid_origin: [f64; 3],
+    grid_size: [i64; 3],
+) -> PyResult<Bound<'py, PyDict>> {
+    let v = vertices.as_array();
+    let f = faces.as_array();
+    if v.shape()[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "vertices must be (N, 3), got {:?}",
+            v.shape()
+        )));
+    }
+    if f.shape()[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "faces must be (M, 3), got {:?}",
+            f.shape()
+        )));
+    }
+    for axis in 0..3 {
+        if chunk_shape[axis].is_nan() || chunk_shape[axis] <= 0.0 {
+            return Err(PyValueError::new_err(
+                "chunk_shape must be positive on every axis",
+            ));
+        }
+        if grid_size[axis] < 1 {
+            return Err(PyValueError::new_err(
+                "grid_size must be at least 1 on every axis",
+            ));
+        }
+    }
+
+    let vertex_list: Vec<[f32; 3]> = (0..v.shape()[0])
+        .map(|i| [v[[i, 0]], v[[i, 1]], v[[i, 2]]])
+        .collect();
+    let nv = vertex_list.len() as u32;
+    let mut face_list = Vec::with_capacity(f.shape()[0]);
+    for i in 0..f.shape()[0] {
+        let face = [f[[i, 0]], f[[i, 1]], f[[i, 2]]];
+        if face.iter().any(|&idx| idx >= nv) {
+            return Err(PyValueError::new_err(format!(
+                "face {i} references a vertex past the end of the array"
+            )));
+        }
+        face_list.push(face);
+    }
+    let mesh = TriangleMesh {
+        vertices: vertex_list,
+        faces: face_list,
+        normals: None,
+        pinned: Vec::new(),
+    };
+
+    let options = DiceOptions {
+        chunk_shape,
+        grid_origin,
+        grid_size,
+    };
+    let cells = py.detach(move || dice_mesh(&mesh, &options));
+
+    let out = PyDict::new(py);
+    for cell in cells {
+        let arrays = to_arrays(
+            py,
+            TriangleMesh {
+                vertices: cell.vertices,
+                faces: cell.faces,
+                normals: None,
+                pinned: Vec::new(),
+            },
+        );
+        out.set_item(
+            (cell.index[0], cell.index[1], cell.index[2]),
+            (arrays.0, arrays.1),
+        )?;
+    }
+    Ok(out)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Mesher>()?;
+    m.add_function(wrap_pyfunction!(dice, m)?)?;
     Ok(())
 }
