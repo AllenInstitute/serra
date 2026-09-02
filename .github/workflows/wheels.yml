@@ -6,6 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # maturin takes the version from pyproject.toml, not from the tag, so a
+  # mistyped tag would publish whatever version the files happen to say under a
+  # name that does not match it. Fail before anything is built.
+  check-version:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          cargo=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag pyproject=$pyproject cargo=$cargo"
+          test "$tag" = "$pyproject" || { echo "::error::tag $tag != pyproject.toml $pyproject"; exit 1; }
+          test "$tag" = "$cargo" || { echo "::error::tag $tag != Cargo.toml $cargo"; exit 1; }
+
   build:
     name: ${{ matrix.platform.os }} ${{ matrix.platform.target }}
     runs-on: ${{ matrix.platform.runner }}
@@ -99,7 +116,7 @@ jobs:
 
   publish:
     name: publish to PyPI
-    needs: [build, sdist, test-wheel]
+    needs: [check-version, build, sdist, test-wheel]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Trusted publishing: PyPI verifies this workflow's OIDC identity, so there
