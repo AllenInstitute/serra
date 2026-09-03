@@ -127,6 +127,5 @@ def dice(
     )
     label = getattr(mesh, "id", None)
     return {
-        index: Mesh(vertices=v, faces=f, id=label)
-        for index, (v, f) in pieces.items()
+        index: Mesh(vertices=v, faces=f, id=label) for index, (v, f) in pieces.items()
     }
