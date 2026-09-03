@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "serra-mesh"
-version = "0.0.1"
+version = "0.2.0"
 description = "Analytical multi-material meshes from voxelized segmentations"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -51,7 +51,7 @@ extend-exclude = ["*.ipynb", "*.md"]
 select = ["E9", "F63", "F7", "F82"]
 
 [tool.bumpversion]
-current_version = "0.0.1"
+current_version = "0.2.0"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 regex = false
