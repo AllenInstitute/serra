@@ -1,0 +1,1323 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Analytical multi-material meshes from voxelized segmentations">
+      
+      
+      
+      
+        <link rel="prev" href="../reference/">
+      
+      
+        <link rel="next" href="../references/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Related work - serra</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#gamer-and-why-serras-smoothing-is-in-the-wrong-domain" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="serra" class="md-header__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            serra
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Related work
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="serra" class="md-nav__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    serra
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunked/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunked meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../accuracy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pychunkedgraph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PyChunkedGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Related work
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Related work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-a-naive-multi-material-port-would-be-slow-and-worse-than-slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why a naive multi-material port would be slow — and worse than slow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#serra-already-has-this-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serra already has this bug
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-fix-smooth-in-the-cell-domain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fix: smooth in the cell domain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-ports-from-gamer-and-what-does-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What ports from GAMer, and what does not
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-local-structure-tensor-actually-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the local structure tensor actually does
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What the local structure tensor actually does">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measured-at-matched-displacement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured, at matched displacement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-finding-that-limits-all-of-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The finding that limits all of this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-that-leaves-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where that leaves it
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-a-naive-multi-material-port-would-be-slow-and-worse-than-slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why a naive multi-material port would be slow — and worse than slow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#serra-already-has-this-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serra already has this bug
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-fix-smooth-in-the-cell-domain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fix: smooth in the cell domain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-ports-from-gamer-and-what-does-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What ports from GAMer, and what does not
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-local-structure-tensor-actually-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the local structure tensor actually does
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What the local structure tensor actually does">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measured-at-matched-displacement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured, at matched displacement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-finding-that-limits-all-of-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The finding that limits all of this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-that-leaves-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where that leaves it
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="gamer-and-why-serras-smoothing-is-in-the-wrong-domain">GAMer, and why serra's smoothing is in the wrong domain</h1>
+<p>Two papers were put to serra as a possible source of technique:</p>
+<blockquote>
+<p>Yu, Z., Holst, M. J., Cheng, Y., &amp; McCammon, J. A. (2008). <em>Feature-preserving
+adaptive mesh generation for molecular shape modeling and simulation</em>. Journal
+of Molecular Graphics and Modelling, 26(8), 1370–1380.</p>
+<p>Lee, C. T., Laughlin, J. G., Angliviel de La Beaumelle, N., Amaro, R. E.,
+McCammon, J. A., Ramamoorthi, R., Holst, M., &amp; Rangamani, P. (2020). <em>3D mesh
+processing using GAMer 2 to enable reaction-diffusion simulations in realistic
+cellular geometries</em>. PLoS Computational Biology, 16(4), e1007756.</p>
+</blockquote>
+<p>They were not considered when serra was designed; it follows Frisken (2022)
+multi-label SurfaceNets. GAMer is a different family — a mesh <em>post-processing</em>
+toolchain whose contribution begins after iso-contouring, not an extractor.</p>
+<div class="admonition note">
+<p class="admonition-title">Two projects share the name</p>
+<p><code>github.com/gamer-project/gamer</code> is a GPU-accelerated adaptive mesh
+refinement code for <strong>astrophysics</strong>. The mesh-conditioning GAMer described
+above is <code>github.com/ctlee/gamer</code> (PyPI <code>pygamer</code>).</p>
+</div>
+<p>Everything below is measured with <code>bench/cell_smoothing.py</code> on the committed
+MICrONS neuropil fixture, unless a source is given.</p>
+<h2 id="why-a-naive-multi-material-port-would-be-slow-and-worse-than-slow">Why a naive multi-material port would be slow — and worse than slow</h2>
+<p><strong>GAMer's front end is single-material by construction.</strong> GAMer 1 blurs atoms
+into a scalar field and extracts one isosurface at one isovalue; GAMer 2 takes
+surface meshes from contour tiling. Neither ingests a label volume. For <em>N</em>
+labels you run it <em>N</em> times.</p>
+<p>The obvious cost is the traversal. Even with the standard optimisation of
+cropping each object to its bounding box, on the neuropil fixture — 20,840
+objects, median 56 voxels — the bounding boxes sum to 33.5 G voxels against
+134 M in the array. <strong>A per-label pipeline touches 250× the volume</strong>, because
+neuropil objects are long thin processes whose boxes overlap enormously. serra's
+single pass is the whole reason it is viable at 10⁵–10⁶ objects per chunk.</p>
+<p>The deeper objection is not speed. In dense neuropil <strong>88.6% of distinct vertex
+positions belong to more than one label</strong>: most surface is <em>interface</em>, not
+exterior boundary. 76.3% of boundary cells hold exactly two labels, 13.7% hold
+three or more. A mesh-domain algorithm whose neighbourhood is one label's own
+surface therefore processes the same wall twice, from two different
+neighbourhoods, and the two copies drift apart.</p>
+<h2 id="serra-already-has-this-bug">serra already has this bug</h2>
+<p>serra's own relaxation runs per label. Measured on a 128³ neuropil subvolume
+with one shared Jacobi operator, six iterations, <code>max_deviation = 0.5</code>:</p>
+<table>
+<thead>
+<tr>
+<th>smoothing</th>
+<th>area / raw</th>
+<th>mean dihedral</th>
+<th>angles in [40°,80°]</th>
+<th>volume / voxel truth</th>
+<th>wall drift, median</th>
+<th>max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>none</td>
+<td>100.0%</td>
+<td>25.1°</td>
+<td>67.8%</td>
+<td>97.99%</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td><strong>per label</strong> (serra today)</td>
+<td>84.3%</td>
+<td>16.9°</td>
+<td>86.5%</td>
+<td>84.00%</td>
+<td>0.103 vx</td>
+<td><strong>2.224 vx</strong></td>
+</tr>
+<tr>
+<td>cell domain</td>
+<td>93.4%</td>
+<td>21.3°</td>
+<td>87.5%</td>
+<td>93.92%</td>
+<td><strong>0</strong></td>
+<td><strong>0</strong></td>
+</tr>
+<tr>
+<td>cell domain + LST</td>
+<td>97.3%</td>
+<td>23.4°</td>
+<td>87.7%</td>
+<td>97.12%</td>
+<td><strong>0</strong></td>
+<td><strong>0</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Two labels' copies of the same wall end up as much as <strong>2.2 voxels — 71 nm —
+apart</strong>. After smoothing, the segmentation is no longer a partition of space:
+adjacent objects gap or interpenetrate.</p>
+<p>The cell-domain rows are also, at identical operator and iteration count,
+markedly <em>less destructive</em> — 93.9% of the true volume against 84.0%. A shared
+node is pulled by neighbours drawn from every label meeting there, and those
+neighbours agree with each other; a per-label copy is pulled only by its own
+label's surface, which curves away from the wall.</p>
+<h2 id="the-fix-smooth-in-the-cell-domain">The fix: smooth in the cell domain</h2>
+<p>serra places one vertex per cell as a pure function of that cell's eight corner
+labels (<code>cell_vertex</code>, <code>src/place.rs</code>), so <strong>every label present in a cell
+already receives the identical position</strong> — and then serra copies it into each
+label's mesh and smooths the copies independently. Smoothing one shared position
+per cell instead:</p>
+<ul>
+<li>makes drift <strong>exactly zero</strong> by construction, at any iteration count;</li>
+<li>costs <strong>2.04×</strong> less, there being 2.06 label-copies per boundary cell;</li>
+<li>makes a per-cell structure tensor affordable, one tensor serving every label.</li>
+</ul>
+<p>This is Frisken's own formulation, which serra departed from. It is not a new
+idea; it is a gap being closed.</p>
+<p><strong>Wrinkle, measured:</strong> the extractor splits a cell's vertex per surface <em>sheet</em>
+where a label touches itself only diagonally, and all sheets share the cell
+position, so welding on position alone would fuse sheets that are deliberately
+separate. That is 0.237% of (cell, label) pairs, affecting 0.483% of cells. The
+prototype gives them private nodes and reports the count.</p>
+<h2 id="what-ports-from-gamer-and-what-does-not">What ports from GAMer, and what does not</h2>
+<p><strong>The quality-improvement stage does not port, because serra does not have the
+problem it solves.</strong> GAMer's angle-based smoothing and vertex-removal decimation
+exist to repair marching cubes run on a <em>smooth scalar field</em>, where the
+isosurface crosses a cube edge at an arbitrary interpolated position and two
+vertices can land arbitrarily close together. The 2008 paper's input meshes have
+a minimum angle of <strong>0.02°</strong> and a maximum of 179.1°. On label data there is no
+interpolation, and neither mesher produces slivers:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>min angle</th>
+<th>max angle</th>
+<th>in [40°,80°]</th>
+<th>below 10°</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh (marching cubes)</td>
+<td>26.2°</td>
+<td>127.6°</td>
+<td>43.1%</td>
+<td>0.00%</td>
+</tr>
+<tr>
+<td>serra</td>
+<td>13.7°</td>
+<td>131.1°</td>
+<td>67.2%</td>
+<td>0.00%</td>
+</tr>
+<tr>
+<td>serra, <code>relaxation=3</code></td>
+<td>14.2°</td>
+<td>140.3°</td>
+<td>73.0%</td>
+<td>0.00%</td>
+</tr>
+<tr>
+<td>GAMer's MC input (published)</td>
+<td><strong>0.02°</strong></td>
+<td>179.1°</td>
+<td>~50%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>after GAMer's pipeline (published)</td>
+<td>20.2°</td>
+<td>130.7°</td>
+<td>85–90%</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>serra starts where GAMer finishes and has no degenerate triangles to repair.
+There is headroom to 85–90%, but it is polish, not repair — and GAMer's figure
+comes from three mechanisms together (an angle-based target, the structure
+tensor, and edge flips), only one of which is discussed below.</p>
+<p><strong>The local structure tensor does port</strong>, with its purpose corrected.</p>
+<h2 id="what-the-local-structure-tensor-actually-does">What the local structure tensor actually does</h2>
+<p>T = Σ n nᵀ over the incident wall normals; damp the smoothing step by
+1/(1+γλₖ) along each eigenvector. It is tempting to read this as an anisotropic
+replacement for serra's isotropic <code>max_deviation</code> box. That reading is wrong.</p>
+<p>On a locally flat patch every incident normal is the same <strong>n</strong>, so T is rank one
+with its large eigenvalue along the <em>surface normal</em>. Damping therefore
+suppresses motion <strong>off</strong> the surface and leaves motion <strong>along</strong> it free. On a
+crease the normals span two directions and only motion along the crease line
+survives; at a corner nothing moves. It is a <em>slide along the surface, do not
+move off it</em> constraint. It bounds normal displacement and bounds tangential
+displacement not at all — so it does not replace <code>max_deviation</code>, which bounds
+total displacement from the data. The two are orthogonal.</p>
+<p>Two properties make it fit serra specifically:</p>
+<ul>
+<li><strong>n nᵀ is sign-invariant</strong>, so the winding flip between the two sides of a
+  shared wall is irrelevant and one tensor serves every label in the cell.</li>
+<li><strong>No eigendecomposition is needed.</strong> Because the eigenvectors are orthonormal
+  and T = Σ λₖ eₖ eₖᵀ, the damped update is identically
+  <strong>x̂ = x + (I + γT)⁻¹ (x̄ − x)</strong>. T is a sum of outer products, so I + γT is
+  symmetric positive definite with eigenvalues ≥ 1: always invertible, well
+  conditioned, and solvable in closed form. <code>np.linalg.eigh</code> costs 784 ns per
+  3×3; the closed-form solve is roughly 30× cheaper.</li>
+</ul>
+<p>One correction worth recording, because it is easy to get wrong: a wall between
+A and B is emitted into <em>both</em> meshes. Since n nᵀ is sign-invariant, gathering
+faces per label does not cancel that duplication — it <strong>doubles</strong> it, weighting
+interior walls twice against walls facing background. The tensor must be
+assembled over each wall once, in the cell domain.</p>
+<h3 id="measured-at-matched-displacement">Measured, at matched displacement</h3>
+<p>Comparing two smoothers at equal parameters is meaningless when they move
+vertices by different amounts: the one that moves less always looks like it
+preserves more. Both arms below are the same Jacobi Laplacian, swept over
+iteration count and read off at a matched mean displacement.</p>
+<table>
+<thead>
+<tr>
+<th>fixture</th>
+<th>mean move</th>
+<th>constraint</th>
+<th>volume / true</th>
+<th>area / raw</th>
+<th>dihedral</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>sphere r=20</strong> (control)</td>
+<td>0.186 vx</td>
+<td>isotropic</td>
+<td>98.76%</td>
+<td>96.7%</td>
+<td><strong>1.8°</strong></td>
+</tr>
+<tr>
+<td></td>
+<td></td>
+<td>LST</td>
+<td>99.48%</td>
+<td>97.8%</td>
+<td>4.5°</td>
+</tr>
+<tr>
+<td><strong>cylinder r=12</strong></td>
+<td>0.219 vx</td>
+<td>isotropic</td>
+<td>96.86%</td>
+<td>93.2%</td>
+<td>3.1°</td>
+</tr>
+<tr>
+<td></td>
+<td></td>
+<td>LST</td>
+<td><strong>98.56%</strong></td>
+<td>96.2%</td>
+<td>4.1°</td>
+</tr>
+<tr>
+<td><strong>box 24³</strong></td>
+<td>0.195 vx</td>
+<td>isotropic</td>
+<td>96.45%</td>
+<td>93.4%</td>
+<td>2.6°</td>
+</tr>
+<tr>
+<td></td>
+<td></td>
+<td>LST</td>
+<td><strong>98.49%</strong></td>
+<td>97.0%</td>
+<td>2.5°</td>
+</tr>
+</tbody>
+</table>
+<p>Read the dihedral column alongside the volume. On the <strong>sphere</strong> the LST loses
+less volume but also smooths far less — 4.5° against 1.8° — and at <em>matched
+smoothing</em> the isotropic bound is marginally better. That is the correct control
+result: a sphere's structure tensor is near-isotropic, so there is no anisotropy
+to exploit and the LST must not win there.</p>
+<p>On the <strong>box</strong> both reach the same dihedral, 2.5°, and the LST loses 1.0% of
+volume where the isotropic bound loses 3.0%. The box's exact bevel loss is
+3n − 2 = 70 voxels, 0.51%, so isotropic smoothing is destroying the edges and
+corners at six times that rate while the LST largely holds them. That is the
+mechanism working as advertised, on the fixture where it should.</p>
+<h2 id="the-finding-that-limits-all-of-this">The finding that limits all of this</h2>
+<p>Per-label QEM simplification <strong>already destroys wall coincidence</strong>, before any
+of the above is considered. Same subvolume, <code>relaxation=0</code>, measuring the share
+of distinct vertex positions belonging to more than one label:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>shared positions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no simplification</td>
+<td><strong>88.5%</strong></td>
+</tr>
+<tr>
+<td><code>reduction_factor=2</code></td>
+<td>43.9%</td>
+</tr>
+<tr>
+<td><code>reduction_factor=10</code></td>
+<td>16.8%</td>
+</tr>
+</tbody>
+</table>
+<p>PyChunkedGraph's served path calls <code>get(id, reduction_factor=100, max_error=40)</code>.
+So for the meshes the pipeline actually stores, the coincident-wall guarantee is
+gone at simplification regardless of what smoothing does. Cell-domain smoothing
+is worth having for the LOD-0 and analysis paths — anywhere volumes or contact
+areas are measured off the meshes — but it does not by itself make the <em>served</em>
+meshes a partition. Doing that would need the simplifier made cell-aware too,
+which is a substantially larger change.</p>
+<h2 id="where-that-leaves-it">Where that leaves it</h2>
+<ul>
+<li>The hypothesis is right: a naive multi-material port is slow (250×) and, more
+  importantly, structurally wrong for data that is 88.6% shared interface.</li>
+<li>The clever way is to move smoothing from the label domain to the cell domain.
+  It is cheaper, it is less destructive, and it makes drift exactly zero.</li>
+<li>The structure tensor is a genuine improvement on sharp features, is far
+  cheaper than it first appears, and is a <em>tangential</em> constraint that
+  complements <code>max_deviation</code> rather than replacing it.</li>
+<li>None of it fixes the served path on its own, because simplification breaks
+  coincidence first.</li>
+</ul>
+<p>Reproduce with:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>bench
+python<span class="w"> </span>bench/cell_smoothing.py
+</code></pre></div>
+<p>The reference implementation could not be used for a head-to-head: <code>pygamer</code>
+2.0.7 (Aug 2021) ships source-only, and its vendored pybind11 predates CPython
+3.11's opaque <code>PyFrameObject</code>, so it does not build against a current
+interpreter. The published figures above are quoted from the papers.</p>
+<h1 id="other-published-approaches-to-the-same-problem">Other published approaches to the same problem</h1>
+<p>GAMer is one family. Asked what else addresses accurate meshing of binary and
+label segmentations, the literature splits along a line that turns out to
+matter: whether the staircase is fixed <strong>on the mesh</strong> or <strong>in the volume</strong>.</p>
+<h2 id="extraction">Extraction</h2>
+<table>
+<thead>
+<tr>
+<th>approach</th>
+<th>reference</th>
+<th>relation to serra</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Marching cubes</td>
+<td>Lorensen &amp; Cline, SIGGRAPH '87</td>
+<td>the baseline; vertices pinned to edge midpoints</td>
+</tr>
+<tr>
+<td>MC with topological guarantees</td>
+<td>Chernyaev's MC33, implemented by Lewiner, Lopes, Vieira &amp; Tavares, <em>J. Graphics Tools</em> 8(2):1–15, 2003</td>
+<td>fixes the ambiguous-face cases; orthogonal to vertex placement</td>
+</tr>
+<tr>
+<td>SurfaceNets</td>
+<td>Gibson, MICCAI '98, then Frisken, <em>JCGT</em> 11(1), 2022</td>
+<td>what serra implements</td>
+</tr>
+<tr>
+<td>Dual contouring</td>
+<td>Ju, Losasso, Schaefer &amp; Warren, SIGGRAPH '02; Manifold DC, Schaefer, Ju &amp; Warren, <em>TVCG</em> 13(3), 2007</td>
+<td>same dual family, Hermite data rather than labels</td>
+</tr>
+<tr>
+<td><strong>Delaunay refinement</strong></td>
+<td>Pons, Ségonne, Boissonnat, Rineau, Yvinec &amp; Keriven, <em>High-Quality Consistent Meshing of Multi-label Datasets</em>, IPMI 2007; extended in <em>Engineering with Computers</em> 27, 2011; shipped in CGAL</td>
+<td>the serious alternative — see below</td>
+</tr>
+<tr>
+<td>Connectomics-specific</td>
+<td>Abdellah et al., <em>Ultraliser</em>, <em>Briefings in Bioinformatics</em> 24(1):bbac491, 2023</td>
+<td>watertight meshes from binary masks, built for thin neuronal structure</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Delaunay refinement is the one family that solves a problem serra does not.</strong>
+It produces provably good triangles and, critically, surface and volume meshes
+of every label that are consistent with each other <strong>including at multi-material
+junctions</strong> — the exact place where serra's per-label smoothing lets adjacent
+objects drift apart. The cost is that it is a global, iterative refinement
+algorithm: it does not stream, does not chunk with bit-exact seams, and is
+orders of magnitude slower per object. For a hundred thousand objects in a chunk
+it is not a candidate; for a handful of tissues in a medical volume it is the
+right answer.</p>
+<h2 id="smoothing-fix-the-volume-not-the-mesh">Smoothing: fix the volume, not the mesh</h2>
+<p>This is the more useful answer to "the proper way to smooth small objects", and
+it is a different idea from anything serra currently does.</p>
+<blockquote>
+<p>Whitaker, R. T. (2000). <em>Reducing Aliasing Artifacts in Iso-Surfaces of Binary
+Volumes</em>. IEEE Symposium on Volume Visualization, 23–32.</p>
+<p>Lempitsky, V. (2010). <em>Surface Extraction from Binary Volumes with
+Higher-Order Smoothness</em>. CVPR 2010.</p>
+</blockquote>
+<p>Whitaker's method is explicitly a reformulation of Gibson's constrained elastic
+SurfaceNets that acts on the <strong>volume</strong> instead of the mesh: the level set moves
+under mean curvature flow with the binary data as a hard constraint, so the zero
+isosurface may not cross a voxel centre. Lempitsky's replaces the binary volume
+with a continuous embedding whose zero level set is smooth <em>and</em> consistent with
+the input, by convex optimisation, and can impose higher-order smoothness.</p>
+<p>The property that matters is the shape of the constraint. It is stated in terms
+of the data — <em>the extracted surface must still classify every voxel the way the
+input did</em> — so <strong>shrinking a thin object away is not in the feasible set</strong>.
+That is exactly the failure mode measured in
+<a href="../accuracy/#thin-structures-decide-it">Accuracy</a>, where Laplacian mesh
+relaxation removes 41% of a radius-2 tube. A mesh-domain smoother cannot express
+that constraint: <code>max_deviation</code> bounds how far a vertex moves but says nothing
+about whether the surface has crossed the data. ITK ships Whitaker's method as
+<code>AntiAliasBinaryImageFilter</code>.</p>
+<p>On the mesh side, volume loss is a known problem and Taubin's λ|μ is the
+standard answer — the medical-meshing literature generally recommends it, or
+HC-Laplacian (Vollmer, Mencl &amp; Müller, <em>Improved Laplacian Smoothing of Noisy
+Surface Meshes</em>, Eurographics 1999), over plain Laplacian for exactly the
+reasons measured here.</p>
+<h2 id="two-things-that-do-not-work-measured">Two things that do not work, measured</h2>
+<p>Both are in <code>bench/analytic_tube.py</code>, scored against the analytic solid.</p>
+<p><strong>A distance transform buys nothing.</strong> Marching cubes on a signed Euclidean
+distance transform of the mask is <em>identical</em> to marching cubes on the raw
+binary, to four decimal places in every metric. The EDT of a binary mask is
+itself quantised at the boundary — the first inside layer sits at +1 and the
+first outside layer at −1 — so linear interpolation lands on the midpoint just
+as it does for a binary field. Sub-voxel accuracy has to come from somewhere,
+and a distance transform does not create it.</p>
+<p><strong>Gaussian blur of the indicator shrinks like Laplacian smoothing.</strong> On the
+radius-2 tube it removes about a third of the volume. Blurring is not a
+constrained operation, so it fails the same way and for the same reason.</p>
+<p>A naive stand-in for Whitaker — Gaussian blur of the embedding with the voxel
+signs pinned — also fails badly, and that is <strong>not</strong> evidence about Whitaker's
+method. An isotropic Gaussian averages straight through a tube two voxels
+across, where curvature flow in a narrow band would not. Testing the published
+algorithm means running ITK.</p>
+<h2 id="what-this-suggests-for-serra">What this suggests for serra</h2>
+<p>In order of expected value:</p>
+<ol>
+<li><strong>Fine-resolution vertex placement</strong>, already measured in
+   <a href="../accuracy/#when-the-voxels-are-not-the-truth">Accuracy</a>: worth 4.3 IoU
+   points where smoothing is worth 0.03. Nothing in the literature above beats
+   simply having the finer data when it exists.</li>
+<li><strong>A constrained smoother in the volume</strong>, Whitaker-style, run before
+   extraction. It composes with serra rather than replacing anything, and it is
+   the only approach found that structurally cannot eat a thin process.</li>
+<li><strong>Delaunay refinement's junction consistency</strong> is the right idea; the cheap
+   version of it for serra is cell-domain smoothing, above.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

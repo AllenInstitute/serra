@@ -1,0 +1,2212 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Analytical multi-material meshes from voxelized segmentations">
+      
+      
+      
+      
+        <link rel="prev" href="../chunked/">
+      
+      
+        <link rel="next" href="../pychunkedgraph/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Accuracy and smoothing - serra</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#accuracy-and-smoothing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="serra" class="md-header__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            serra
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Accuracy and smoothing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="serra" class="md-nav__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    serra
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunked/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunked meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#analytic-shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analytic shapes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-systematic-biases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two systematic biases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaxation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaxation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relaxation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bounding-the-deviation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounding the deviation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-against-zmesh-on-real-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation against zmesh on real data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validation against zmesh on real data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reproducing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#judged-against-an-analytic-solid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Judged against an analytic solid
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Judged against an analytic solid">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#thin-structures-decide-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin structures decide it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-voxels-are-not-the-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the voxels are not the truth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-smoothing-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two smoothing filters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two smoothing filters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-an-analytic-sphere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On an analytic sphere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-looks-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it looks like
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-real-neuropil-which-is-what-settles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On real neuropil, which is what settles it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#order-against-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order against simplification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-fixed-settings-transfer-between-big-and-small-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do fixed settings transfer between big and small objects?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#smoothing-a-chunked-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing a chunked volume
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-trap-if-you-smooth-with-pyvista-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A trap if you smooth with pyvista instead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reproducing_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pychunkedgraph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PyChunkedGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../related-work/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Related work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#analytic-shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analytic shapes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-systematic-biases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two systematic biases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaxation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaxation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relaxation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bounding-the-deviation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounding the deviation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-against-zmesh-on-real-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation against zmesh on real data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validation against zmesh on real data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reproducing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#judged-against-an-analytic-solid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Judged against an analytic solid
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Judged against an analytic solid">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#thin-structures-decide-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin structures decide it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-voxels-are-not-the-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the voxels are not the truth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#two-smoothing-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two smoothing filters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two smoothing filters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-an-analytic-sphere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On an analytic sphere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-looks-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it looks like
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-real-neuropil-which-is-what-settles-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On real neuropil, which is what settles it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#order-against-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order against simplification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-fixed-settings-transfer-between-big-and-small-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do fixed settings transfer between big and small objects?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#smoothing-a-chunked-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing a chunked volume
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-trap-if-you-smooth-with-pyvista-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A trap if you smooth with pyvista instead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reproducing_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="accuracy-and-smoothing">Accuracy and smoothing</h1>
+<p>Every figure here is checked by the test suite, and the tolerances there are set
+from these measurements rather than from round numbers.</p>
+<h2 id="analytic-shapes">Analytic shapes</h2>
+<p>Measured against exact volume and area, isotropic voxels, no relaxation:</p>
+<table>
+<thead>
+<tr>
+<th>shape</th>
+<th>volume</th>
+<th>area</th>
+<th>mean normal error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sphere, r = 8…32</td>
+<td>&lt; 0.11%</td>
+<td>+2.8…3.0%</td>
+<td>8.1°</td>
+</tr>
+<tr>
+<td>ellipsoid 30/20/12</td>
+<td>+0.17%</td>
+<td>+3.3%</td>
+<td>8.6°</td>
+</tr>
+<tr>
+<td>cylinder, any axis</td>
+<td>−1.48%</td>
+<td>−0.47%</td>
+<td></td>
+</tr>
+<tr>
+<td>torus R25 r8</td>
+<td>+0.24%</td>
+<td>+2.9%</td>
+<td></td>
+</tr>
+<tr>
+<td>ellipsoid on 4×4×40 nm voxels</td>
+<td>−0.21%</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Every one comes out closed, 2-manifold and correctly oriented, with the right
+Euler characteristic — including χ = 0 for the torus, so genus survives meshing.</p>
+<h2 id="two-systematic-biases">Two systematic biases</h2>
+<p><strong>Area is overstated by about 3%</strong> on smooth surfaces and does not shrink with
+resolution. Placing a cell's vertex at the centroid of its edge crossings leaves
+the surface slightly faceted. Marching cubes has the same non-convergence at
+roughly +9%.</p>
+<p><strong>Sharp convex edges are bevelled.</strong> An n³ box loses exactly <code>3n − 2</code> of volume:
+an edge effect, so the relative error falls as 1/n². Marching cubes has the
+opposite bias — exact on axis-aligned boxes, 9% over on spheres. For the rounded
+shapes serra targets this does not bite; a sphere lands within 0.06%.</p>
+<h2 id="relaxation">Relaxation</h2>
+<p><code>relaxation=k</code> runs <code>k</code> iterations of constrained smoothing. On a sphere of
+radius 20:</p>
+<table>
+<thead>
+<tr>
+<th>k</th>
+<th>volume</th>
+<th>area</th>
+<th>mean normal</th>
+<th>95th pct</th>
+<th>triangle-area CV</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>−0.11%</td>
+<td>+2.95%</td>
+<td>8.1°</td>
+<td>17.5°</td>
+<td>0.247</td>
+</tr>
+<tr>
+<td>3</td>
+<td>−0.52%</td>
+<td><strong>+0.24%</strong></td>
+<td>4.0°</td>
+<td>9.3°</td>
+<td>0.224</td>
+</tr>
+<tr>
+<td>5</td>
+<td>−0.78%</td>
+<td>−0.25%</td>
+<td>2.9°</td>
+<td>6.8°</td>
+<td>0.220</td>
+</tr>
+<tr>
+<td>10</td>
+<td>−1.43%</td>
+<td>−0.87%</td>
+<td>1.8°</td>
+<td>4.2°</td>
+<td>0.216</td>
+</tr>
+<tr>
+<td>25</td>
+<td>−3.39%</td>
+<td>−2.24%</td>
+<td><strong>1.0°</strong></td>
+<td>2.0°</td>
+<td>0.212</td>
+</tr>
+</tbody>
+</table>
+<p>Normal accuracy converges with iterations, which it does not under local
+placement alone. <code>k = 3</code> is a good default when you want it: area error drops
+by an order of magnitude for a modest cost.</p>
+<h3 id="bounding-the-deviation">Bounding the deviation</h3>
+<p>Laplacian smoothing shrinks volume. <code>max_deviation</code> (in voxels, default 0.5)
+caps how far any vertex may move from where the data put it, enforced per axis
+against the <em>original</em> position rather than per step. Tightening it monotonically
+reduces shrinkage:</p>
+<table>
+<thead>
+<tr>
+<th>max_deviation</th>
+<th>volume error at k = 25</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.1</td>
+<td>−1.09%</td>
+</tr>
+<tr>
+<td>0.25</td>
+<td>−2.99%</td>
+</tr>
+<tr>
+<td>0.5</td>
+<td>−6.42%</td>
+</tr>
+</tbody>
+</table>
+<p>Relaxation preserves topology: genus survives, and one-voxel-thick sheets do not
+collapse.</p>
+<div class="admonition warning">
+<p class="admonition-title">Objects that touch each other</p>
+<p>Relaxation currently runs per object. Two objects sharing a wall hold
+separate copies of it and smooth against different neighbourhoods near the
+wall's rim, so the wall may no longer be exactly coincident from both sides.
+Each object stays individually watertight and manifold. At <code>relaxation=0</code>
+shared walls are exactly coincident, which the test suite checks.</p>
+</div>
+<h2 id="validation-against-zmesh-on-real-data">Validation against zmesh on real data</h2>
+<p><code>bench/validate_winding.py</code> performs the check described in <code>CLAUDE.md</code>: classify
+sample points as inside or outside each mesh with a robust generalized winding
+number, confirm the volumes agree, and confirm that where the two disagree the
+points lie <em>close to the surface</em>. That last part is what distinguishes a
+genuine difference in where the surface was placed from an actual defect — a
+hole or an inverted patch produces disagreements scattered through the volume.</p>
+<p>The fixture is <code>data/microns_neuropil.npy.gz</code>: a 512³ cutout at 32×32×40 nm from
+<code>gs://iarpa_microns/minnie/minnie65/seg_m1300</code>, taken from dense neuropil near
+the centre of the imaged column. It holds <strong>20,840 objects with a median size of
+56 voxels</strong>, and no single object exceeds 4.1% of the volume — deliberately not a
+cell body, since serra is built for volumes with very many small objects.</p>
+<p>Over 24 objects spanning the size range, 20,000 sample points each:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>serra volume / true voxel volume</td>
+<td><strong>0.982</strong> (0.918–1.005)</td>
+</tr>
+<tr>
+<td>zmesh volume / true voxel volume</td>
+<td>0.968 (0.918–0.991)</td>
+</tr>
+<tr>
+<td>serra / zmesh volume</td>
+<td><strong>1.015</strong> (1.000–1.031)</td>
+</tr>
+<tr>
+<td>winding-number agreement</td>
+<td>94.7% of sampled points</td>
+</tr>
+<tr>
+<td>disagreeing points, distance to surface</td>
+<td>median <strong>0.47</strong> voxels, worst <strong>2.11</strong></td>
+</tr>
+<tr>
+<td>all sampled points, distance to surface</td>
+<td>median 4.98 voxels</td>
+</tr>
+</tbody>
+</table>
+<p>Two things to read from this.</p>
+<p><strong>serra is closer to the voxel truth than zmesh</strong> — 0.982 against 0.968 — and
+both undershoot, which is expected: a surface drawn through the voxel boundary
+cuts the corners off a blocky object.</p>
+<p><strong>Every disagreement is a boundary effect.</strong> Disagreeing points sit 11× closer to
+the surface than a typical sampled point, and none is further than 2.11 voxels
+from it. The two meshers place the surface slightly differently within about a
+voxel, and agree everywhere else. Nothing is scattered through the interior,
+which is what a hole or an inverted normal would produce.</p>
+<p>The raw agreement rate of 94.7% is not a defect either: most of these objects are
+tiny, so uniform sampling in their bounding box puts a large share of points
+within a voxel of the surface. Agreement is 99%+ on the larger objects and falls
+on the smallest purely through the surface-to-volume ratio.</p>
+<h3 id="reproducing">Reproducing</h3>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>bench
+python<span class="w"> </span>bench/download_microns.py<span class="w">            </span><span class="c1"># re-fetch the cutout</span>
+python<span class="w"> </span>bench/download_microns.py<span class="w"> </span>--survey<span class="w">   </span><span class="c1"># re-run the region search</span>
+python<span class="w"> </span>bench/validate_winding.py
+</code></pre></div>
+<h2 id="judged-against-an-analytic-solid">Judged against an analytic solid</h2>
+<p>The comparisons above measure a mesh against the voxels it was built from, and
+the section below measures it against a finer grid. Both references are
+quantised, so both confound "the mesh is wrong" with "the reference is blocky".
+<code>bench/analytic_tube.py</code> removes the reference grid entirely.</p>
+<p>A tube is defined by a smooth closed space curve C(t) and a radius R(t), and a
+point is inside when its distance to the curve is less than the radius there —
+answerable exactly at any floating-point coordinate. The voxelisation, a voxel
+labelled by whether its <em>centre</em> is inside, is then the only quantised object in
+the experiment. The curve winds around the z axis while oscillating along it, so
+the surface presents every orientation to the grid rather than favouring the
+axis planes the way a sphere or a cylinder does.</p>
+<p><img alt="analytic tube, radius 4" src="../images/analytic_tube_r4.png" /></p>
+<p>Two things are measured. <strong>Surface accuracy</strong>: sample points on the mesh,
+area-weighted, and evaluate the analytic signed distance at each — a perfect
+mesh scores zero, the mean absolute value is how far the surface sits from the
+truth, and the mean signed value says whether it sits systematically inside or
+outside. <strong>Classification</strong>: sample the box, ask the solid and the mesh
+independently, count disagreements.</p>
+<p>This is the most favourable setting for smoothing that exists. The true surface
+really is smooth, so everything separating it from the voxelisation is
+quantisation noise and there is no real detail to destroy.</p>
+<table>
+<thead>
+<tr>
+<th>radius 4 voxels</th>
+<th>faces</th>
+<th>mean |error|</th>
+<th>bias</th>
+<th>volume</th>
+<th>IoU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh (marching cubes)</td>
+<td>13,504</td>
+<td>0.141 vx</td>
+<td>−0.021</td>
+<td>−1.18%</td>
+<td>93.48%</td>
+</tr>
+<tr>
+<td>serra, no smoothing</td>
+<td>13,504</td>
+<td>0.109 vx</td>
+<td>−0.043</td>
+<td>−2.15%</td>
+<td>94.99%</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td>13,504</td>
+<td>0.078 vx</td>
+<td>−0.026</td>
+<td>−1.25%</td>
+<td>96.39%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>13,504</td>
+<td>0.068 vx</td>
+<td>−0.009</td>
+<td>−0.40%</td>
+<td>96.85%</td>
+</tr>
+<tr>
+<td><code>fairing=10 + taubin</code></td>
+<td>13,504</td>
+<td>0.078 vx</td>
+<td>−0.026</td>
+<td>−1.26%</td>
+<td>96.39%</td>
+</tr>
+<tr>
+<td><strong><code>fairing=20 + taubin</code></strong></td>
+<td>13,504</td>
+<td><strong>0.068 vx</strong></td>
+<td><strong>−0.010</strong></td>
+<td><strong>−0.42%</strong></td>
+<td><strong>96.85%</strong></td>
+</tr>
+<tr>
+<td><code>fairing=40 + taubin</code></td>
+<td>13,504</td>
+<td>0.063 vx</td>
+<td>+0.021</td>
+<td>+1.08%</td>
+<td>96.98%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Smoothing recovers the surface downsampling hid.</strong> Mean error falls 38% and
+the bias converges on zero — at 20 sweeps the surface is unbiased to within a
+hundredth of a voxel and the enclosed volume is within half a percent of
+analytic.</p>
+<p><strong>The cell domain and the label domain agree to three decimal places</strong>, which is
+the point of running it here. An analytic tube is a single object, and on a
+single object the two are the same graph, so anything other than agreement would
+mean the cell-domain implementation was wrong. What it buys — adjacent objects
+that cannot drift apart — a one-object fixture structurally cannot show; that is
+measured on real neuropil below.</p>
+<div class="admonition warning">
+<p class="admonition-title">Plain Laplacian smoothing is not in this table</p>
+<p>Neither <code>relaxation=k</code> nor <code>fairing=k</code> without Taubin steps appears here,
+because neither is worth recommending: both shrink. At 20 sweeps on this
+tube they lose 12% and 15% of the volume respectively, and 41% at radius 2.
+They are the same operator in two different domains. The numbers are kept
+under <a href="#thin-structures-decide-it">thin structures</a> as evidence of what to
+avoid, not offered as a choice.</p>
+</div>
+<h3 id="thin-structures-decide-it">Thin structures decide it</h3>
+<p>The same experiment at three radii — mean surface error in voxels, then IoU:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>r=2</th>
+<th>r=4</th>
+<th>r=8</th>
+<th></th>
+<th>r=2</th>
+<th>r=4</th>
+<th>r=8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh</td>
+<td>0.145</td>
+<td>0.141</td>
+<td>0.147</td>
+<td></td>
+<td>86.8%</td>
+<td>93.5%</td>
+<td>96.7%</td>
+</tr>
+<tr>
+<td>no smoothing</td>
+<td>0.127</td>
+<td>0.109</td>
+<td>0.107</td>
+<td></td>
+<td>87.9%</td>
+<td>95.0%</td>
+<td>97.6%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>0.087</td>
+<td>0.068</td>
+<td>0.067</td>
+<td></td>
+<td>91.9%</td>
+<td>96.8%</td>
+<td>98.5%</td>
+</tr>
+<tr>
+<td><code>fairing=20 + taubin</code></td>
+<td>0.087</td>
+<td>0.068</td>
+<td>0.068</td>
+<td></td>
+<td>91.9%</td>
+<td>96.9%</td>
+<td>98.5%</td>
+</tr>
+<tr>
+<td><strong><code>fairing=40 + taubin</code></strong></td>
+<td><strong>0.079</strong></td>
+<td><strong>0.063</strong></td>
+<td><strong>0.063</strong></td>
+<td></td>
+<td><strong>92.6%</strong></td>
+<td><strong>97.0%</strong></td>
+<td><strong>98.5%</strong></td>
+</tr>
+</tbody>
+</table>
+<p>For scale, the Laplacian settings left out of this table: <code>relaxation=3</code> scores
+0.217 / 0.123 / 0.087 and <code>relaxation=10</code> scores 0.475 / 0.264 / 0.156, with IoU
+falling to <strong>59.1%</strong> at radius 2. That is the shrinkage, and it is worst exactly
+where connectomics lives.</p>
+<p><img alt="analytic tube, radius 2" src="../images/analytic_tube_r2.png" /></p>
+<p>Read down the radius columns rather than across the rows. Every method improves
+as the tube thickens, but they do not improve at the same rate: at radius 8 even
+plain <code>relaxation=3</code> is respectable at 0.087 voxels, while at radius 2 it is
+<em>worse than not smoothing at all</em> and <code>relaxation=10</code> removes <strong>41% of the
+volume</strong>. Laplacian smoothing takes a roughly fixed depth off every surface, so
+the relative cost scales as 1/r and thin processes pay for it in proportion.
+Taubin's shrink compensation removes that term, which is why its advantage grows
+in the same direction the Laplacian's damage does.</p>
+<p>For connectomics that is the whole operating regime — a spine neck at 32 nm
+voxels is two or three voxels across. <strong>Use <code>fairing</code> with Taubin steps.</strong> The
+per-label <code>taubin</code> is equivalent on isolated objects and only differs where
+objects touch, and plain Laplacian smoothing should not be used on thin
+structures at all.</p>
+<p>Two other things the analytic reference settles:</p>
+<ul>
+<li><strong>serra beats marching cubes at every radius</strong>, by 10–25% in mean surface
+  error, with the largest gap on the thinnest tube.</li>
+<li><strong>zmesh's <code>close=True</code> shifts its output by a whole voxel.</strong> It pads the
+  volume and does not subtract the pad again. Measured on a sphere centred at
+  (32,32,32), zmesh's mesh centroid is (33,33,33) against serra's (32,32,32).
+  The benchmark corrects for it; uncorrected it reports a coordinate convention
+  as a 0.87-voxel accuracy difference.</li>
+</ul>
+<p>Reproduce, including the figures:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>bench/analytic_tube.py<span class="w"> </span>--render
+</code></pre></div>
+<h2 id="when-the-voxels-are-not-the-truth">When the voxels are not the truth</h2>
+<p>Every number above treats the array being meshed as ground truth. In a
+connectomics pipeline it usually is not. MICrONS is segmented at 8×8×40 nm and
+meshed at 32×32×40 for speed and memory, so serra sees a 4×4×1 <strong>downsample</strong> of
+a segmentation that already locates the boundary four times more precisely in x
+and y.</p>
+<p>That changes what smoothing is for. Against the coarse voxels, relaxation "loses
+volume" and looks like damage. Against the fine segmentation the coarse array
+was made from, the same displacement might instead be <em>recovering</em> the boundary
+that downsampling discarded. <code>bench/resolution_fidelity.py</code> settles it by
+fetching both resolutions of the same box.</p>
+<p>Segment <code>864691136144674612</code>, a 5 µm cube: 135,555 coarse voxels against
+2,172,904 fine ones. The served coarse array agrees with a majority downsample of
+the fine one on 99.74% of voxels, so this is measuring serra and not the
+downsampler. Agreement is scored by sampling a million points, asking the fine
+segmentation whether each is inside, and asking the coarse mesh the same with a
+winding number — every row scored on identical points, since the differences are
+fractions of a percent.</p>
+<table>
+<thead>
+<tr>
+<th>mesh</th>
+<th>faces</th>
+<th>volume vs fine</th>
+<th>IoU</th>
+<th>too big</th>
+<th>too small</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>99,128</td>
+<td>−0.95%</td>
+<td>94.073%</td>
+<td>2.70%</td>
+<td>3.39%</td>
+</tr>
+<tr>
+<td><code>relaxation=1</code></td>
+<td>99,128</td>
+<td>−1.29%</td>
+<td>94.040%</td>
+<td>2.58%</td>
+<td>3.53%</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>99,128</td>
+<td>−1.95%</td>
+<td>93.885%</td>
+<td>2.37%</td>
+<td>3.89%</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td>99,128</td>
+<td>−3.96%</td>
+<td><strong>92.860%</strong></td>
+<td>1.89%</td>
+<td>5.39%</td>
+</tr>
+<tr>
+<td><code>taubin=3</code></td>
+<td>99,128</td>
+<td>−0.88%</td>
+<td>94.085%</td>
+<td>2.73%</td>
+<td>3.35%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>99,128</td>
+<td>−0.50%</td>
+<td>94.105%</td>
+<td>2.85%</td>
+<td>3.21%</td>
+</tr>
+<tr>
+<td><strong>coarse topology, fine placement</strong></td>
+<td>99,128</td>
+<td>−0.66%</td>
+<td><strong>98.341%</strong></td>
+<td>0.58%</td>
+<td>1.09%</td>
+</tr>
+<tr>
+<td>fine mesh, decimated 9×</td>
+<td>101,560</td>
+<td>−0.21%</td>
+<td>99.926%</td>
+<td>0.02%</td>
+<td>0.05%</td>
+</tr>
+<tr>
+<td>fine mesh (the ceiling)</td>
+<td>914,048</td>
+<td>−0.16%</td>
+<td>100%</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Smoothing does not recover the fine boundary.</strong> Taubin is neutral — 0.03
+points of a 5.93-point gap, inside the sampling noise. Laplacian relaxation is
+actively worse, and the mechanism is visible in the last two columns: it trades
+a small reduction in over-inclusion for a larger increase in under-inclusion. It
+is shrinking past the true surface, not converging on it. Mean distance to the
+fine surface goes the same way, 8.2 nm unsmoothed to 10.3 nm at
+<code>relaxation=10</code>. So the volume loss reported elsewhere on this page is real
+error, not a correction.</p>
+<p><strong>The triangle budget is not what costs you.</strong> The fine mesh decimated to the
+same face count as the coarse one reaches 99.93%. All of the 5.9-point deficit
+is the 32 nm sampling; none of it is the mesh being too coarse to represent the
+shape.</p>
+<p><strong>What does work is placing the coarse vertices from fine data.</strong> Keeping the
+coarse topology exactly — same connectivity, same 99,128 faces, same mesh memory
+— and moving each vertex onto the fine surface, clamped to its own cell as
+serra's placement already guarantees, recovers <strong>4.27 of the 5.93 points</strong>, 72%
+of the gap. Mean distance to the fine surface falls from 8.2 nm to 0.1 nm.</p>
+<div class="admonition note">
+<p class="admonition-title">What this prototype does and does not show</p>
+<p>It projects onto a fine mesh built from the whole fine array, so it
+demonstrates the <em>value</em> of fine-resolution placement, not a cheap way to
+get it. A real implementation would read the fine array a slab at a time and
+compute each coarse cell's vertex from the fine occupancy inside it —
+<code>cell_vertex</code> is already a per-cell function of the corner labels, so the
+change is confined to placement and leaves topology, seams and chunking
+alone. Peak memory would be one fine slab rather than one coarse slab, not
+the whole fine volume.</p>
+<p>Measured on one segment. It should be repeated across object sizes and on a
+cell body before anything is built on it.</p>
+</div>
+<h2 id="two-smoothing-filters">Two smoothing filters</h2>
+<p><code>relaxation=k</code> is Frisken's constrained Laplacian fairing: each pass moves a
+vertex a fraction of the way to the average of its neighbours, bounded by
+<code>max_deviation</code>, with seam vertices pinned. It is diffusion, and diffusion
+shrinks.</p>
+<p><code>taubin=k</code> alternates a positive step <code>lambda</code> with a larger negative one, <code>mu</code>,
+derived from <code>taubin_pass_band</code>. The pair is a low-pass filter rather than a
+diffusion: the low graph frequencies that carry an object's bulk come through at
+close to unit gain, so the surface can be smoothed hard without the volume
+draining away. Each iteration costs two passes instead of one. Everything else
+is shared — the same adjacency, the same pinning, the same <code>max_deviation</code>
+bound.</p>
+<p>Both run inside <code>mesh()</code>, so a mesh is always smoothed <strong>before</strong> <code>get()</code>
+simplifies it, which is the order that measures better (see below).</p>
+<h3 id="on-an-analytic-sphere">On an analytic sphere</h3>
+<p>Radius 32 voxels, isotropic. Normal error is the mean angle between each face
+normal and the true surface normal.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>area error</th>
+<th>volume error</th>
+<th>normal error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>+2.80%</td>
+<td>−0.23%</td>
+<td>12.52°</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>+0.28%</td>
+<td>−0.39%</td>
+<td>5.16°</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td>−0.42%</td>
+<td>−0.75%</td>
+<td>1.76°</td>
+</tr>
+<tr>
+<td><code>relaxation=20</code></td>
+<td>−0.82%</td>
+<td>−1.27%</td>
+<td>0.97°</td>
+</tr>
+<tr>
+<td><code>taubin=3</code></td>
+<td>+1.29%</td>
+<td>−0.22%</td>
+<td>8.57°</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td>+0.47%</td>
+<td>−0.19%</td>
+<td>5.19°</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>+0.25%</td>
+<td>−0.14%</td>
+<td>3.80°</td>
+</tr>
+<tr>
+<td><code>taubin=40</code></td>
+<td>+0.19%</td>
+<td>−0.05%</td>
+<td>2.94°</td>
+</tr>
+</tbody>
+</table>
+<p>Read the columns together. Relaxation is far more efficient at buying normals —
+3 passes reach what Taubin needs 20 for — but it pays in volume, and past
+<code>relaxation=10</code> the area error has gone <em>negative</em>: the sphere is now smaller
+than the data says. Taubin's volume error moves the other way, towards zero.</p>
+<h3 id="what-it-looks-like">What it looks like</h3>
+<p>A 5 µm cutout of dendrite <code>864691136144674612</code> at 32×32×40 nm, one camera, flat
+shaded so individual triangles stay visible. VTK's Nuttall window is included at
+a matched pass count — one VTK iteration is one pass, one serra iteration is two
+— since Nuttall is the window VTK added specifically to stop the shrinkage the
+older Hamming window causes.</p>
+<p><img alt="smoothing filters compared" src="../images/smoothing_864691136144674612.png" /></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>area / unsmoothed</th>
+<th>mean dihedral</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>100.0%</td>
+<td>17.9°</td>
+</tr>
+<tr>
+<td>vtk nuttall, 20 passes</td>
+<td>93.8%</td>
+<td>9.8°</td>
+</tr>
+<tr>
+<td><code>serra taubin=10</code>, 20 passes</td>
+<td>93.9%</td>
+<td>9.9°</td>
+</tr>
+<tr>
+<td><code>serra taubin=20</code>, 40 passes</td>
+<td>93.2%</td>
+<td>8.5°</td>
+</tr>
+</tbody>
+</table>
+<p>At equal passes the built-in filter and Nuttall are indistinguishable, by the
+numbers and by eye. The difference is that the built-in one can be run per chunk.</p>
+<h3 id="on-real-neuropil-which-is-what-settles-it">On real neuropil, which is what settles it</h3>
+<p>A sphere has almost no surface to lose. A 200 nm spine neck does. 24 objects
+between the 70th and 99th size percentile in the MICrONS cutout, closed ones
+only, measured against the voxel count:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>volume / true</th>
+<th>area / unsmoothed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>99.98%</td>
+<td>100.0%</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>97.51%</td>
+<td>89.4%</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td>93.06%</td>
+<td>83.2%</td>
+</tr>
+<tr>
+<td><code>taubin=3</code></td>
+<td><strong>100.12%</strong></td>
+<td>95.5%</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td><strong>100.44%</strong></td>
+<td>93.0%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td><strong>100.93%</strong></td>
+<td>92.2%</td>
+</tr>
+</tbody>
+</table>
+<p>Laplacian relaxation eats 2.5% of the volume at <code>k=3</code> and 7% at <code>k=10</code>. Taubin
+holds it. <strong>Prefer <code>taubin</code> when the meshes will be measured</strong>, and <code>relaxation</code>
+when only appearance matters and the budget is tight.</p>
+<h3 id="what-it-costs">What it costs</h3>
+<p>512³ MICrONS volume, 2523 objects, Apple M4 Pro (14 cores), median of three
+runs. <code>get()</code> covers extracting every object.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>mesh()</code></th>
+<th><code>get()</code></th>
+<th>total</th>
+<th>1 thread</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>0.28 s</td>
+<td>0.98 s</td>
+<td><strong>1.26 s</strong></td>
+<td>1.62 s</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>0.48 s</td>
+<td>0.92 s</td>
+<td>1.40 s</td>
+<td>3.21 s</td>
+</tr>
+<tr>
+<td><code>taubin=2</code></td>
+<td>0.51 s</td>
+<td>0.94 s</td>
+<td>1.45 s</td>
+<td>3.49 s</td>
+</tr>
+<tr>
+<td><code>taubin=3</code></td>
+<td>0.57 s</td>
+<td>0.94 s</td>
+<td>1.51 s</td>
+<td>4.03 s</td>
+</tr>
+<tr>
+<td><code>taubin=5</code></td>
+<td>0.68 s</td>
+<td>0.96 s</td>
+<td>1.64 s</td>
+<td>4.88 s</td>
+</tr>
+</tbody>
+</table>
+<p>Smoothing is added work and cannot be free. What it is, is <strong>no more expensive
+than the relaxation pass that was already there</strong>: <code>taubin=2</code> costs about what
+<code>relaxation=3</code> does, and the whole smoothing stage is roughly a third cheaper
+than it was before this work, because the adjacency structure is now built
+without a global compaction pass and the position buffers are <code>f32</code>.</p>
+<p>Cost splits about evenly between building the vertex adjacency (once per object,
+whatever the iteration count) and the passes themselves, so the <em>first</em>
+iteration is much more expensive than the tenth.</p>
+<h3 id="order-against-simplification">Order against simplification</h3>
+<p>Smooth first. At a 10× reduction, with VTK quadric decimation on both paths so
+the order is the only variable:</p>
+<table>
+<thead>
+<tr>
+<th>order</th>
+<th>mean distance to full-res</th>
+<th>worst</th>
+<th>volume kept</th>
+<th>roughness</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>simplify only</td>
+<td>0.100 vx</td>
+<td>0.70</td>
+<td>97.8%</td>
+<td>33.6°</td>
+</tr>
+<tr>
+<td>Taubin then simplify</td>
+<td>0.103 vx</td>
+<td>0.48</td>
+<td>98.2%</td>
+<td>26.3°</td>
+</tr>
+<tr>
+<td>simplify then Taubin</td>
+<td>0.325 vx</td>
+<td>2.71</td>
+<td>88.6%</td>
+<td>22.8°</td>
+</tr>
+</tbody>
+</table>
+<p>Smoothing first costs essentially nothing in fidelity and improves the worst
+case; smoothing afterwards deviates 3× further and loses 11% of the volume,
+because a decimated mesh has no high-frequency detail left to remove and the
+filter eats structure instead. serra gets this order for free: smoothing happens
+in <code>mesh()</code>, simplification in <code>get()</code>.</p>
+<h3 id="do-fixed-settings-transfer-between-big-and-small-objects">Do fixed settings transfer between big and small objects?</h3>
+<p>Convergence does. Spheres from r=8 to r=64 — a 65× range in vertex count — with
+the same settings throughout, mean normal error in degrees:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>r=8</th>
+<th>r=16</th>
+<th>r=32</th>
+<th>r=64</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>12.62</td>
+<td>11.84</td>
+<td>12.52</td>
+<td>12.25</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>5.81</td>
+<td>4.84</td>
+<td>5.16</td>
+<td>4.98</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td>5.76</td>
+<td>4.91</td>
+<td>5.19</td>
+<td>4.98</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>4.32</td>
+<td>3.67</td>
+<td>3.80</td>
+<td>3.60</td>
+</tr>
+</tbody>
+</table>
+<p>Flat, and structurally so rather than by luck. Dual contouring places one vertex
+per cell, so edge length is about one voxel whatever the object's size, and the
+staircase artifact therefore sits in a fixed band of <em>graph</em> frequency at every
+scale. A fixed iteration count removes the same thing on a spine head as on a
+cell body. This would not hold on a mesh with non-uniform edge lengths, which is
+another reason smoothing belongs before decimation.</p>
+<p>The shrinkage does not transfer, and this is the hazard. Same runs, area error:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>r=8</th>
+<th>r=16</th>
+<th>r=32</th>
+<th>r=64</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>−2.94%</td>
+<td>−0.48%</td>
+<td>+0.28%</td>
+<td>+0.45%</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td><strong>−7.14%</strong></td>
+<td>−1.83%</td>
+<td>−0.42%</td>
+<td>−0.05%</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td>−0.86%</td>
+<td>+0.10%</td>
+<td>+0.47%</td>
+<td>+0.54%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>−0.66%</td>
+<td>+0.01%</td>
+<td>+0.25%</td>
+<td>+0.30%</td>
+</tr>
+</tbody>
+</table>
+<p>Laplacian iteration removes a roughly fixed <em>depth</em> from every surface, so the
+relative cost goes as 1/r. A <code>relaxation</code> setting tuned on a large object will
+quietly eat small ones. Taubin's bias is about ten times flatter over the same
+range.</p>
+<h3 id="smoothing-a-chunked-volume">Smoothing a chunked volume</h3>
+<p>Both filters pin the outermost layer of cells, so seam vertices stay
+bit-identical between neighbouring chunks and stitching by exact vertex equality
+still works. This is <em>not</em> true of a post-hoc smoother applied to the output.
+Measured with VTK's windowed-sinc filter on a sphere across 3×3×3 chunks, all
+2,628 seam vertices move whatever the window:</p>
+<table>
+<thead>
+<tr>
+<th>window</th>
+<th>boundary smoothing</th>
+<th>max seam displacement</th>
+<th>stitches?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Blackman</td>
+<td>on</td>
+<td>1.7 × 10⁻¹ voxel</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Blackman</td>
+<td>off</td>
+<td>1.7 × 10⁻³ voxel</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Hamming</td>
+<td>off</td>
+<td>3.9 × 10⁻² voxel</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Nuttall</td>
+<td>off</td>
+<td>4.9 × 10⁻⁵ voxel</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>Blackman preserves borders far better than the default, but "far better" is not
+"exactly", and exact is what welding needs. If you must smooth after the fact,
+snap every seam vertex back to the extractor's position afterwards: stitching
+then succeeds, and the assembled surface lands a median 0.003 voxels from where
+smoothing the whole volume in one piece would have put it.</p>
+<p>The trade-off <code>serra</code> accepts by pinning instead: a chunk's interior smooths
+slightly more than the band around its seams, so a stitched surface is
+self-consistent and watertight but not identical to the same volume smoothed in
+one piece. Measured on a sphere of radius 60 in a 144³ volume at <code>taubin=10</code>,
+with a positive-only halo of 2:</p>
+<table>
+<thead>
+<tr>
+<th>chunk</th>
+<th>chunks</th>
+<th>pinned</th>
+<th>stitches</th>
+<th>faces = whole-volume</th>
+<th>median</th>
+<th>worst</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16³</td>
+<td>296</td>
+<td>12.2%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.004 vx</td>
+<td>0.171 vx</td>
+</tr>
+<tr>
+<td>24³</td>
+<td>137</td>
+<td>8.3%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.171 vx</td>
+</tr>
+<tr>
+<td>36³</td>
+<td>57</td>
+<td>5.4%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.174 vx</td>
+</tr>
+<tr>
+<td>48³</td>
+<td>26</td>
+<td>3.8%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.171 vx</td>
+</tr>
+<tr>
+<td>72³</td>
+<td>8</td>
+<td>2.1%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.129 vx</td>
+</tr>
+</tbody>
+</table>
+<p>The pinned fraction follows surface-to-volume, so it is under 1% at a 256³
+chunk. <code>median</code> and <code>worst</code> are distances from where smoothing the whole volume
+in one piece would have put the surface: at 36³ and above, half the vertices
+land in exactly the same place, and the worst case is a sixth of a voxel on the
+seam ring itself.</p>
+<h3 id="a-trap-if-you-smooth-with-pyvista-instead">A trap if you smooth with pyvista instead</h3>
+<p><code>boundary_smoothing</code> is <a href="https://github.com/pyvista/pyvista/issues/8860">documented backwards</a>:
+boundary edges are held fixed when it is <strong><code>False</code></strong>, not <code>True</code>. And the window
+function matters more than it looks — Nuttall was added to VTK specifically to
+fix the shrinkage the older Hamming window produces under normalization, and in
+the seam measurements above it holds borders about 35× tighter than Blackman and
+800× tighter than Hamming. <code>smooth_taubin</code> does not expose the choice before
+pyvista 0.49, which is why <code>bench/taubin.py</code> drives <code>vtkWindowedSincPolyDataFilter</code>
+directly.</p>
+<h3 id="reproducing_1">Reproducing</h3>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>bench
+python<span class="w"> </span>bench/taubin.py
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

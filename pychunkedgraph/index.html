@@ -1,0 +1,1234 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Analytical multi-material meshes from voxelized segmentations">
+      
+      
+      
+      
+        <link rel="prev" href="../accuracy/">
+      
+      
+        <link rel="next" href="../developer/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>PyChunkedGraph - serra</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#using-serra-in-pychunkedgraph" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="serra" class="md-header__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            serra
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              PyChunkedGraph
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="serra" class="md-nav__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    serra
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunked/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunked meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../accuracy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PyChunkedGraph
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PyChunkedGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-anything-has-to-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why anything has to change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-1-the-halo-must-be-two-voxels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change 1 — the halo must be two voxels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-2-the-weld-predicate-must-cover-the-seam-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change 2 — the weld predicate must cover the seam cell
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Change 2 — the weld predicate must cover the seam cell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-softer-related-issue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A softer, related issue
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-already-matches-and-needs-no-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What already matches, and needs no change
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What already matches, and needs no change">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#draco-quantization-is-not-a-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Draco quantization is not a problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compressed-size-a-coarse-bin-is-what-saves-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compressed size: a coarse bin is what saves it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-serra-must-do-and-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What serra must do, and does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequencing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequencing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../related-work/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Related work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-anything-has-to-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why anything has to change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-1-the-halo-must-be-two-voxels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change 1 — the halo must be two voxels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-2-the-weld-predicate-must-cover-the-seam-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change 2 — the weld predicate must cover the seam cell
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Change 2 — the weld predicate must cover the seam cell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-softer-related-issue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A softer, related issue
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-already-matches-and-needs-no-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What already matches, and needs no change
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What already matches, and needs no change">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#draco-quantization-is-not-a-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Draco quantization is not a problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compressed-size-a-coarse-bin-is-what-saves-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compressed size: a coarse bin is what saves it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-serra-must-do-and-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What serra must do, and does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequencing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequencing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="using-serra-in-pychunkedgraph">Using serra in PyChunkedGraph</h1>
+<p>serra can replace zmesh in the PyChunkedGraph meshing pipeline, but <strong>two
+changes to PyChunkedGraph are required first</strong>. Without them the pipeline fails
+silently: meshes render correctly while being full of holes and topologically
+disconnected across chunks, which is precisely what the cross-chunk graph
+depends on.</p>
+<p>Every claim on this page is checked by a script that needs no PyChunkedGraph
+install:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>bench
+python<span class="w"> </span>bench/pcg_compat.py
+</code></pre></div>
+<p>Line numbers refer to <code>pychunkedgraph/meshing/</code> as of <code>zmesh==1.7.0</code>,
+<code>dracopy==1.3.0</code>.</p>
+<h2 id="why-anything-has-to-change">Why anything has to change</h2>
+<p>Marching cubes reads <strong>one cell per face</strong>: a triangle depends only on the eight
+voxels of the cube it sits in. Dual contouring reads <strong>two cell layers per
+face</strong>: a quad is dual to a voxel edge and is built from the four cells
+surrounding it. Everything below follows from that one difference.</p>
+<h2 id="change-1-the-halo-must-be-two-voxels">Change 1 — the halo must be two voxels</h2>
+<p><strong><code>pychunkedgraph/meshing/meshgen.py:930</code></strong></p>
+<div class="highlight"><pre><span></span><code><span class="gd">-    high_padding = 1</span>
+<span class="gi">+    high_padding = 2</span>
+</code></pre></div>
+<p>That constant is the whole change. It already flows to both places that need
+it: the segmentation fetch (<code>meshgen.py:959</code> and <code>:967</code>, reaching
+<code>meshgen_utils.py:166</code>) and the Draco quantization range (<code>meshgen.py:955</code> →
+<code>:594</code>, where <code>min_quantization_range</code> is computed from
+<code>mesh_block_shape + high_padding</code>). No separate range bump is needed.</p>
+<p>For consistency the same default should move in the three other places it is
+declared, so higher-layer stitching agrees with what layer 2 produced:</p>
+<table>
+<thead>
+<tr>
+<th>file</th>
+<th>line</th>
+<th>current</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>meshgen_utils.py</code></td>
+<td>153</td>
+<td><code>def get_ws_seg_for_chunk(cg, chunk_id, mip, overlap_vx=1)</code></td>
+</tr>
+<tr>
+<td><code>meshgen.py</code></td>
+<td>579</td>
+<td><code>get_draco_encoding_settings_for_chunk(..., high_padding: int = 1)</code></td>
+</tr>
+<tr>
+<td><code>meshgen.py</code></td>
+<td>1096</td>
+<td><code>chunk_stitch_remeshing_task(..., high_padding=1, ...)</code></td>
+</tr>
+<tr>
+<td><code>meshgen.py</code></td>
+<td>1241</td>
+<td><code>chunk_initial_sharded_stitching_task(..., high_padding=1, ...)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>This costs no extra downloads.</strong> <code>chunk_end = chunk_start + mip_chunk_size +
+overlap_vx</code> extends only in +x/+y/+z, and 1 and 2 both land inside the <em>next</em>
+chunk. The factor-of-two saving the positive-only halo was designed for is
+preserved exactly; only the slice end moves by one voxel. Extending backwards
+is what would pull in the previous chunk and triple the fetches.</p>
+<p><strong>What happens without it.</strong> Measured on a 72³ volume cut into 24³ chunks:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>faces produced</th>
+<th>missing</th>
+<th>broken edges</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sphere, <code>high_padding=1</code></td>
+<td>31,344</td>
+<td><strong>2,592</strong></td>
+<td>2,496</td>
+</tr>
+<tr>
+<td>sphere, <code>high_padding=2</code></td>
+<td>33,936</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>slab on a seam, <code>high_padding=1</code></td>
+<td>25,296</td>
+<td><strong>1,840</strong></td>
+<td>1,808</td>
+</tr>
+<tr>
+<td>slab on a seam, <code>high_padding=2</code></td>
+<td>27,136</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<p>A face that was never emitted cannot be recovered by welding, so this is not
+something the stitcher can paper over.</p>
+<h2 id="change-2-the-weld-predicate-must-cover-the-seam-cell">Change 2 — the weld predicate must cover the seam cell</h2>
+<p><strong><code>pychunkedgraph/meshing/meshgen.py:743</code></strong></p>
+<div class="highlight"><pre><span></span><code><span class="gd">-        are_chunk_aligned = (vertices == quantized_chunk_boundary).any(axis=1)</span>
+<span class="gi">+        # Dual-contouring vertices sit inside the cell straddling the boundary</span>
+<span class="gi">+        # rather than on the boundary plane, so match the cell, not the plane.</span>
+<span class="gi">+        voxel = np.array(cg.meta.cv.mip_resolution(mip), dtype=vertices.dtype)</span>
+<span class="gi">+        are_chunk_aligned = (</span>
+<span class="gi">+            np.abs(vertices - quantized_chunk_boundary) &lt;= voxel</span>
+<span class="gi">+        ).any(axis=1)</span>
+</code></pre></div>
+<p><strong>Why.</strong> Marching cubes places vertices on cube edges, so a whole sheet of them
+lands exactly on the shared plane and exact float equality finds them. serra
+places one vertex inside each cell, so none lie on the plane.</p>
+<p>Measured on a sphere spanning a chunk boundary at x = 24:</p>
+<div class="highlight"><pre><span></span><code>vertices shared across the seam                : 288
+matched by  vertices == boundary               : 0
+matched by  |vertices - boundary| &lt;= 1 voxel   : 288
+they lie at x in [24.168, 24.832] — inside the seam cell
+</code></pre></div>
+<p><strong>Zero of 288.</strong> <code>merge_draco_meshes_across_boundaries</code> would weld nothing and
+degrade to plain concatenation. The result renders correctly and is completely
+disconnected at every seam.</p>
+<div class="admonition warning">
+<p class="admonition-title">This failure is silent</p>
+<p>Nothing in the pipeline validates watertightness, and the only error
+handling around meshing is a bare <code>except:</code> on the Draco encode. An
+unwelded seam produces no warning at any stage.</p>
+</div>
+<h3 id="a-softer-related-issue">A softer, related issue</h3>
+<p><strong><code>pychunkedgraph/meshing/mesh_analysis.py:40-44</code></strong> selects boundary vertices
+with <code>vertices[:, axis] == np.amax(...)</code> — relative to the mesh's own extent
+rather than an absolute plane. It therefore still returns a non-empty set with
+serra, just one offset by up to half a voxel into the seam cell. The find-path
+"precision mode" centroid it feeds will be correspondingly offset. Worth
+knowing; not a blocker.</p>
+<h2 id="what-already-matches-and-needs-no-change">What already matches, and needs no change</h2>
+<p>Confirmed by <code>bench/pcg_compat.py</code>, check 4:</p>
+<table>
+<thead>
+<tr>
+<th>assumption</th>
+<th>status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Mesher(resolution)</code> with positional nm resolution</td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>mesh(seg)</code> leaves block faces open (<code>close=False</code> default)</td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>ids()</code>, <code>erase(id)</code></td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>get(id, reduction_factor=100, max_error=…)</code></td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>mesh.vertices[:] += chunk_offset</code> — mutable in place</td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>vertices</code> float32 <code>(N,3)</code>, <code>faces</code> uint32 <code>(M,3)</code></td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>.flatten("C")</code> for <code>DracoPy.encode_mesh_to_buffer</code></td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>to_precomputed()</code> for the non-Draco debug path</td>
+<td>matches</td>
+</tr>
+<tr>
+<td>origin at the <em>centre</em> of voxel <code>[0,0,0]</code></td>
+<td>matches</td>
+</tr>
+<tr>
+<td><code>[x, y, z]</code> axis order, no transpose</td>
+<td>matches</td>
+</tr>
+</tbody>
+</table>
+<p><code>serra_mesh.Mesher</code> is therefore a drop-in for <code>zmesh.Mesher</code> at every call site
+in <code>meshgen.py</code> (lines 953, 974, 979-983, 998).</p>
+<h3 id="draco-quantization-is-not-a-problem">Draco quantization is not a problem</h3>
+<p>The lattice is <code>floor(min(resolution)/sqrt(2))</code> = 22 nm ≈ 0.69 voxel at
+32×32×40 nm, and the <code>sqrt(2)</code> is calibrated to marching cubes' <em>minimum vertex
+separation</em>. Dual-contouring vertices have no such minimum, so the concern is
+reasonable — but measured on real data the damage is near-identical:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>vertices collapsed</th>
+<th>zero-area triangles</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh</td>
+<td>3.6%</td>
+<td>3.9%</td>
+</tr>
+<tr>
+<td>serra</td>
+<td>3.9%</td>
+<td>4.1%</td>
+</tr>
+</tbody>
+</table>
+<p>A pre-existing property of the pipeline, not something serra introduces. No
+change needed.</p>
+<h3 id="compressed-size-a-coarse-bin-is-what-saves-it">Compressed size: a coarse bin is what saves it</h3>
+<p>The natural expectation is that serra's smoother surfaces compress <em>better</em> —
+Draco predicts each vertex from its neighbours and entropy-codes the residual,
+and terracing looks like high-frequency detail. Measured on 24 objects between
+the 70th and 99th size percentile, undecimated, bytes per face:</p>
+<table>
+<thead>
+<tr>
+<th>quantization</th>
+<th>bin</th>
+<th>zmesh</th>
+<th>serra k=0</th>
+<th>serra k=3</th>
+<th>k=3 vs zmesh</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>10 bits (PyChunkedGraph)</strong></td>
+<td><strong>21 nm</strong></td>
+<td>0.635</td>
+<td>0.638</td>
+<td>0.624</td>
+<td><strong>0.98</strong></td>
+</tr>
+<tr>
+<td>12 bits</td>
+<td>5.2 nm</td>
+<td>0.787</td>
+<td>0.969</td>
+<td>0.964</td>
+<td>1.22</td>
+</tr>
+<tr>
+<td>14 bits</td>
+<td>1.3 nm</td>
+<td>0.873</td>
+<td>1.277</td>
+<td>1.331</td>
+<td>1.52</td>
+</tr>
+<tr>
+<td>16 bits</td>
+<td>0.3 nm</td>
+<td>0.861</td>
+<td>1.449</td>
+<td>1.718</td>
+<td>2.00</td>
+</tr>
+</tbody>
+</table>
+<p>The expectation is backwards. Terracing is not noise to an entropy coder:
+marching-cubes vertices land on a small, highly repetitive set of positions, so
+their residuals code cheaply, and zmesh's cost saturates around 0.87 bytes/face
+once the bin is finer than its own vertex lattice. serra's vertices sit at
+continuous sub-voxel positions whose residuals do not repeat, and at a fine bin
+that costs up to 2×.</p>
+<p>What rescues it is that the pipeline's bin — 21 nm, two thirds of a voxel — is
+coarser than everything that distinguishes the two surfaces. Both collapse onto
+the same lattice, and serra ends up marginally <em>smaller</em>. The same holds after
+decimation, within 2% at every reduction factor from 1× to 50×
+(<code>bench/draco_compression.py</code>).</p>
+<p>The practical consequence is a constraint rather than a win: serra is a drop-in
+for storage cost at PyChunkedGraph's settings, but anyone raising
+<code>quantization_bits</code> to preserve serra's sub-voxel placement should expect the
+stored meshes to grow.</p>
+<h2 id="what-serra-must-do-and-does">What serra must do, and does</h2>
+<p>The pipeline welds by exact coordinate equality, so serra has to make seam
+vertices bit-identical between chunks that never see each other. It does:
+positions are derived from integers in units of 1/256 of a voxel, and a cell
+straddling a seam is present in both chunks and computed from the same eight
+voxels by both.</p>
+<p>Call <code>mesh()</code> with <code>owned_shape</code> so each face belongs to exactly one chunk:</p>
+<div class="highlight"><pre><span></span><code><span class="n">mesher</span> <span class="o">=</span> <span class="n">serra_mesh</span><span class="o">.</span><span class="n">Mesher</span><span class="p">(</span><span class="n">voxel_resolution</span><span class="o">=</span><span class="n">cv</span><span class="o">.</span><span class="n">mip_resolution</span><span class="p">(</span><span class="n">mip</span><span class="p">),</span> <span class="n">threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">mesher</span><span class="o">.</span><span class="n">mesh</span><span class="p">(</span><span class="n">seg</span><span class="p">,</span> <span class="n">close</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">owned_shape</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">mip_chunk_size</span><span class="p">))</span>
+</code></pre></div>
+<p>Without <code>owned_shape</code> both sides of a seam emit the wall between them, and
+because <code>merge_draco_meshes_across_boundaries</code> deduplicates vertices but not
+faces, those duplicates survive as non-manifold edges.</p>
+<p><code>threads=1</code> matters in this pipeline: workers already run one chunk per
+process, and the default would have every one of them claim every core.</p>
+<p>Measured end to end, 26 chunks of a sphere and 18 of a slab, vertex
+deduplication only: face counts equal to the whole-volume mesh, zero broken
+edges, zero duplicate faces.</p>
+<h2 id="sequencing">Sequencing</h2>
+<ol>
+<li>Land change 1. Harmless on its own — zmesh tolerates a wider halo, it just
+   fetches one more voxel and quantizes over a slightly larger cube.</li>
+<li>Land change 2. Mostly harmless on its own, but not entirely: widening the
+   predicate puts more vertices through the <code>np.unique</code> weld. Marching-cubes
+   vertices on the plane are still selected and still weld the same way, and
+   non-coincident vertices simply pass through — but any <em>coincident</em> vertices
+   within a voxel of a boundary that previously stayed separate will now be
+   merged. The code's own comment at <code>meshgen.py:50-52</code> calls interior duplicate
+   vertices an unresolved problem, so merging them is arguably an improvement,
+   but it is a behaviour change and should be confirmed on a test dataset rather
+   than assumed.</li>
+</ol>
+<p>A tighter predicate is possible — serra's shared vertices lie specifically in
+   <code>[boundary, boundary + 1 voxel]</code>, not symmetrically around it — but the sign
+   depends on which side of each axis the chunk sits, so the symmetric form is
+   simpler and safe.
+3. Swap the mesher.</p>
+<p>Because both changes are no-ops for zmesh, they can be deployed and verified
+before serra is introduced at all.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
