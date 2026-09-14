@@ -1,12 +1,14 @@
-"""Benchmark serra against zmesh on a real connectomics volume.
+"""Benchmark serra against zmesh, Frisken's reference C++, and VTK.
 
 Each implementation is run in its own process, so peak RSS reflects only that
-implementation and the two never share an allocator. Invoke once per backend:
+implementation and no two ever share an allocator. Invoke once per backend:
 
-    python bench/compare_zmesh.py serra --volume path/to/labels.npy.gz
-    python bench/compare_zmesh.py zmesh --volume path/to/labels.npy.gz
+    python bench/compare_zmesh.py serra --threads 1 --close
+    python bench/compare_zmesh.py zmesh --close --zmesh ../zmesh
 
-Both print one JSON line, so a wrapper can collect and tabulate them.
+Every backend prints one JSON line, so a wrapper can collect and tabulate them.
+zmesh comes from a local checkout rather than PyPI, so the comparison runs
+against the build you actually have; point --zmesh at it.
 """
 
 from __future__ import annotations
@@ -79,7 +81,15 @@ def run_serra(
     if fairing:
         smooth_s = march - baseline
 
-    stats = {"objects": len(mesher), "march_s": march, "march_peak_gb": after_march}
+    stats = {
+        "objects": len(mesher),
+        "march_s": march,
+        "march_peak_gb": after_march,
+        # Recorded rather than assumed. Whether the volume was padded is the
+        # single most load-bearing setting in the comparison, and without this
+        # nothing in the output distinguishes a padded run from an unpadded one.
+        "close": close,
+    }
     if fairing:
         stats.update(
             fairing=fairing,
@@ -113,17 +123,51 @@ def run_zmesh(
     simplify: int = 0,
     max_error: float = 40.0,
     threads: int = 0,
+    close: bool = False,
 ) -> dict:
-    from zmesh import Mesher
+    """zmesh's marching cubes, one object at a time.
 
-    mesher = Mesher(RESOLUTION)
+    A different algorithm from the other three backends, so it is here as the
+    marching-cubes baseline rather than as a cross-check: it places vertices on
+    voxel edges instead of inside cells, and a different count is the correct
+    outcome, not a disagreement to be explained away.
+
+    `threads` is accepted and ignored -- zmesh has no threading of any kind --
+    which is why it belongs against serra's one-thread column.
+
+    `close` is not the same price here as in serra. serra's is a virtual border
+    (src/grid.rs) and costs nothing. zmesh's wrapper allocates a padded C-order
+    copy of the volume, 0.54 GB at 512 cubed uint32, and copies a
+    Fortran-ordered input into it -- which also moves the traversal off zmesh's
+    Fortran-order loop onto its C-order one. So its padded and unpadded
+    traversal times are not two measurements of the same thing. It also never
+    subtracts the pad again, so vertices land +1 voxel from every other
+    backend's: counts are unaffected, coordinates are not. Nothing here reads a
+    coordinate, so nothing here corrects it; bench/analytic_tube.py does, where
+    coordinates matter.
+    """
+    import zmesh
+
+    mesher = zmesh.Mesher(RESOLUTION)
     start = time.perf_counter()
-    mesher.mesh(volume)
+    mesher.mesh(volume, close=close)
     march = time.perf_counter() - start
     after_march = peak_rss_gb()
 
     ids = mesher.ids()
-    stats = {"objects": len(ids), "march_s": march, "march_peak_gb": after_march}
+    stats = {
+        "objects": len(ids),
+        "march_s": march,
+        "march_peak_gb": after_march,
+        "close": close,
+        # zmesh is single-threaded whatever --threads says.
+        "threads": 1,
+        # Which build produced the numbers. A zmesh is usually also installed in
+        # the environment, so a --zmesh that does not resolve falls back to it
+        # silently -- which is the one thing the flag exists to prevent. Recorded
+        # so the answer is in the output rather than in the shell history.
+        "zmesh_path": zmesh.__file__,
+    }
     if extract_all:
         start = time.perf_counter()
         vertices = faces = nbytes = 0
@@ -285,6 +329,9 @@ def run_vtk(
     start = time.perf_counter()
     mesh = grid.contour_labels(
         boundary_style=boundary_style,
+        # pyvista's default, pinned: serra's --close is what matches it, and the
+        # doc asserts padding is on rather than relying on a default holding.
+        pad_background=True,
         smoothing=smoothing_iterations > 0,
         smoothing_iterations=max(smoothing_iterations, 1),
         output_mesh_type="triangles",
@@ -335,6 +382,11 @@ def main() -> None:
     parser.add_argument("backend", choices=["serra", "zmesh", "frisken", "vtk"])
     parser.add_argument("--volume", default=DEFAULT_VOLUME)
     parser.add_argument(
+        "--zmesh",
+        default="/Users/forrestc/ConnectomeStack/zmesh",
+        help="local zmesh checkout, so the comparison uses the build you have",
+    )
+    parser.add_argument(
         "--simplify",
         type=int,
         default=0,
@@ -373,9 +425,11 @@ def main() -> None:
         "--close",
         action="store_true",
         help=(
-            "serra only; close objects at the volume boundary. Needed to match "
-            "VTK, whose pad_background defaults on -- with it the two agree on "
-            "face count exactly, without it serra emits fewer."
+            "serra and zmesh; close objects at the volume boundary. Needed to "
+            "match VTK, whose pad_background defaults on, and Frisken, which "
+            "always pads -- with it serra's face count matches VTK's exactly, "
+            "without it serra emits fewer. zmesh pays for it with a padded copy "
+            "of the volume and a one-voxel offset in its output; see run_zmesh."
         ),
     )
     parser.add_argument(
@@ -420,6 +474,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # run_zmesh imports lazily, so the checkout has to be on the path before the
+    # runner is called rather than at module import. Only for that backend: the
+    # checkout root holds modules of its own (build/, templates/, test.py,
+    # perf.py) and there is no reason to let them shadow anything in a serra,
+    # VTK or Frisken run.
+    if args.backend == "zmesh":
+        sys.path.insert(0, args.zmesh)
+
     volume = load(args.volume)
     runners = {
         "serra": run_serra,
@@ -444,7 +506,12 @@ def main() -> None:
             "fairing_taubin": args.fairing_taubin,
             "close": args.close,
         }
+    elif args.backend == "zmesh":
+        extra = {"close": args.close}
     else:
+        # `choices` makes this unreachable while all four backends are covered.
+        # Kept so a fifth one fails by producing a bare result rather than a
+        # NameError partway through a twenty-minute run.
         extra = {}
     stats = runners[args.backend](
         volume,

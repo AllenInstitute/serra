@@ -113,7 +113,7 @@ of each vertex must be a single cycle.
 ```bash
 uv sync --group bench                        # pyvista/VTK are not installed by default
 python bench/compare_zmesh.py serra          # one implementation per process
-python bench/compare_zmesh.py zmesh
+python bench/compare_zmesh.py zmesh --zmesh ../zmesh
 python bench/render_comparison.py --zmesh ../zmesh --out docs/images
 ```
 
