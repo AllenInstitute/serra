@@ -131,44 +131,45 @@ On the 512³ connectomics volume (2524 objects), Apple M4 Pro (14 cores), agains
 zmesh 1.15.0 from PyPI. Each figure is the median of three runs, one process per
 implementation so peak RSS is not contaminated:
 
+Both libraries at their own defaults, so neither closes objects at the volume
+boundary:
+
 | | serra (1 thread) | serra (14 threads) | zmesh |
 | --- | --- | --- | --- |
-| `mesh()` — traverse the volume | 1.86 s | **0.47 s** | 0.83 s |
-| `get()` — extract all 2524 objects | 1.05 s | **1.02 s** | 5.43 s |
-| peak RSS | **3.0 GB** | 4.0 GB | 3.4 GB |
+| `mesh()` — traverse the volume | 1.77 s | **0.41 s** | 1.12 s |
+| `get()` — extract all 2524 objects | **1.03 s** | 1.00 s | 22.2 s |
+| peak RSS | **2.96 GB** | 4.12 GB | 5.77 GB |
 | output | 44.8M vertices / 89.2M faces | same | 45.0M / 89.5M |
 
-zmesh has no threading, so the honest single-threaded comparison is the first
-column, and **zmesh traverses the volume about 2.2× faster there**. serra needs
-more than one core to match it, reaching 0.47 s on 14. What serra buys for that
-is a vertex placement that marching cubes cannot express — see
-[accuracy](#what-makes-it-different) — and about 5× on extraction.
+zmesh has no threading, so the fair single-threaded comparison is the first
+column: it is about 1.6× faster at traversing the volume there. Traversal scales
+to 4.3× on 14 cores, at the cost of about 1.2 GB for the merge. serra is roughly
+22× faster at extraction, which needs explaining because it is an architectural
+difference rather than a tuning one.
 
-The extraction gap is architectural rather than a matter of tuning. Marching
-cubes emits a **triangle soup**: every triangle carries its own three vertices
-with no sharing. Turning that into an indexed mesh means deduplicating them, and
-zmesh does it per object with a hash map keyed on packed coordinates. On this
-volume that is 268.6M soup vertices collapsing to 45.0M unique — a **6×
-redundancy**. The soup also drives the memory: 268.6M packed vertices is 2.1 GB
+Marching cubes emits a **triangle soup**: every triangle carries its own three
+vertices with no sharing. Turning that into an indexed mesh means deduplicating
+them, and zmesh does it per object with a hash map keyed on packed coordinates.
+Measured on this volume, that is 268.6M soup vertices collapsing to 45.0M unique
+— a 6× redundancy — at 83 ns each, which is simply what a hash-map insertion
+costs. The soup is also what drives the memory: 268.6M packed vertices is 2.1 GB
 held live while the map is being built.
 
 serra never creates the duplicates. The extractor assigns one vertex per cell
 per connected component up front and quads reference those indices directly, so
-`get()` is a coordinate conversion and a triangulation.
-
-Both therefore **finish** with about 45M unique vertices, which is the `output`
-row above. They differ in how many they touch on the way: zmesh generates
-268.6M and collapses them, serra emits 44.8M and is done. Per vertex *processed*
-the two are within 15% of each other — roughly 20 ns for zmesh against 23 ns for
-serra — so the ~5× in the table is the 6× of intermediate vertices that only one
-of them ever creates, not a slower inner loop.
+`get()` is a coordinate conversion and a triangulation — 23 ns per vertex, or
+memcpy territory.
 
 Reproduce with:
 
 ```bash
 python bench/compare_zmesh.py serra
-python bench/compare_zmesh.py zmesh
+python bench/compare_zmesh.py zmesh --zmesh ../zmesh
 ```
+
+For the same comparison against the other two SurfaceNets implementations, with
+boundary padding on so every column is measured on the same footing, see
+[other implementations](https://alleninstitute.github.io/serra/reference-implementation/).
 
 ### Controlling parallelism
 

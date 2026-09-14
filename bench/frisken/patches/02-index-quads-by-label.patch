@@ -1,0 +1,82 @@
+--- a/MMGeometryOBJ.h	2026-09-01 19:26:39
++++ b/MMGeometryOBJ.h	2026-09-01 19:26:39
+@@ -9,6 +9,7 @@
+ 
+ #include <vector>
+ #include <set>
++#include <map>
+ 
+ class MMSurfaceNet;
+ class MMQuad;
+@@ -36,6 +37,7 @@
+ private:
+ 	MMSurfaceNet* m_surfaceNet;
+ 	std::vector<MMQuad> m_quads;
++	std::map<int, std::vector<int>> m_quadsByLabel;
+ 
+ 	struct vtxData {
+ 		int vID;
+--- a/MMGeometryOBJ.cpp	2026-09-01 19:26:39
++++ b/MMGeometryOBJ.cpp	2026-09-01 19:26:39
+@@ -83,6 +83,18 @@
+ 			MMQuad quad(vertexIndices, quadLabels);
+ 			m_quads.push_back(quad);
+ 		}
++	}
++
++	// Index quads by the two materials they separate. objData() otherwise
++	// makes two full passes over every quad in the volume for each label, so
++	// the total work is O(labels x quads) for a result that is O(quads).
++	for (size_t idx = 0; idx < m_quads.size(); idx++) {
++		unsigned short quadLabels[2];
++		m_quads[idx].getLabels(quadLabels);
++		m_quadsByLabel[(int)quadLabels[0]].push_back((int)idx);
++		if (quadLabels[1] != quadLabels[0]) {
++			m_quadsByLabel[(int)quadLabels[1]].push_back((int)idx);
++		}
+ 	}
+ }
+ MMGeometryOBJ::~MMGeometryOBJ()
+@@ -99,16 +111,15 @@
+ 
+ 	// Initialize a dictionary of vertex data for quads that touch this material
+ 	std::map<int, vtxData> vtxDataMap;	// key: vertexIndex, value: vtxData for this vertex
+-	for (std::vector<MMQuad>::iterator itQuad = m_quads.begin(); itQuad != m_quads.end(); itQuad++) {
+-		unsigned short quadLabels[2];
+-		itQuad->getLabels(quadLabels);
+-		if (label == quadLabels[0] || label == quadLabels[1]) {
+-			int quadVtxIndices[4];
+-			itQuad->getVertexIndices(quadVtxIndices);
+-			for (int i = 0; i < 4; i++) {
+-				vtxData vDataInit = { -1, 0, 0, 0 };
+-				vtxDataMap.insert(std::make_pair(quadVtxIndices[i], vDataInit));
+-			}
++	std::map<int, std::vector<int>>::const_iterator itLabel = m_quadsByLabel.find(label);
++	if (itLabel == m_quadsByLabel.end()) return(output);
++	const std::vector<int>& myQuads = itLabel->second;
++	for (size_t n = 0; n < myQuads.size(); n++) {
++		int quadVtxIndices[4];
++		m_quads[myQuads[n]].getVertexIndices(quadVtxIndices);
++		for (int i = 0; i < 4; i++) {
++			vtxData vDataInit = { -1, 0, 0, 0 };
++			vtxDataMap.insert(std::make_pair(quadVtxIndices[i], vDataInit));
+ 		}
+ 	}
+ 
+@@ -127,12 +138,12 @@
+ 	}
+ 
+ 	// Get face vertex indices (two triangles per quad) and store them in the output.
+-	for (std::vector<MMQuad>::iterator itQuad = m_quads.begin(); itQuad != m_quads.end(); itQuad++) {
++	for (size_t n = 0; n < myQuads.size(); n++) {
+ 		int quadVtxIndices[4];
+ 		unsigned short quadLabels[2];
+-		itQuad->getLabels(quadLabels);
+-		itQuad->getVertexIndices(quadVtxIndices);
+-		if (label == quadLabels[0] || label == quadLabels[1]) {
++		m_quads[myQuads[n]].getLabels(quadLabels);
++		m_quads[myQuads[n]].getVertexIndices(quadVtxIndices);
++		{
+ 			vtxData vData[4];
+ 			for (int i = 0; i < 4; i++) {
+ 				vData[i] = vtxDataMap[quadVtxIndices[i]];
