@@ -1,5 +1,31 @@
 # Developer guide
 
+## Building from source
+
+Needs a Rust toolchain, 1.74 or newer ([rustup](https://rustup.rs)). Then:
+
+```bash
+pip install .                   # builds release and installs
+```
+
+To work on the code, an editable build that you re-run after any Rust change:
+
+```bash
+uv sync
+uv run maturin develop --release
+```
+
+**Always pass `--release`.** `maturin develop` defaults to debug, which is ~24×
+slower: 0.147 s to mesh a 128³ volume against 0.006 s.
+
+To produce a wheel:
+
+```bash
+maturin build --release         # target/wheels/*.whl
+```
+
+`abi3-py39` means one wheel per platform covers CPython 3.9 and up.
+
 ## Layout
 
 The crate is a pipeline, one module per stage. Data flows top to bottom.

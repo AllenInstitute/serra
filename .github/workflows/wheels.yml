@@ -6,6 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # maturin takes the version from pyproject.toml, not from the tag, so a
+  # mistyped tag would publish whatever version the files happen to say under a
+  # name that does not match it. Fail before anything is built.
+  check-version:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          cargo=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag pyproject=$pyproject cargo=$cargo"
+          test "$tag" = "$pyproject" || { echo "::error::tag $tag != pyproject.toml $pyproject"; exit 1; }
+          test "$tag" = "$cargo" || { echo "::error::tag $tag != Cargo.toml $cargo"; exit 1; }
+
   build:
     name: ${{ matrix.platform.os }} ${{ matrix.platform.target }}
     runs-on: ${{ matrix.platform.runner }}
@@ -15,14 +32,16 @@ jobs:
         platform:
           - { os: linux, runner: ubuntu-latest, target: x86_64 }
           - { os: linux, runner: ubuntu-24.04-arm, target: aarch64 }
-          - { os: macos, runner: macos-13, target: x86_64 }
           - { os: macos, runner: macos-latest, target: aarch64 }
           - { os: windows, runner: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
       # The extension is built against Python's stable ABI (abi3-py39), so a
       # single wheel per platform covers every Python from 3.9 up. That is why
-      # there is no Python version in this matrix.
+      # there is no Python version in this matrix -- the versions are exercised
+      # in test-wheel below, which is where a version matrix actually tells you
+      # something. Building one wheel per version would produce artifacts that
+      # differ only in their filename.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
@@ -47,20 +66,78 @@ jobs:
           name: sdist
           path: dist
 
-  smoke-test:
-    name: install the wheel and import it
+  test-wheel:
+    name: python ${{ matrix.python }} on ${{ matrix.os }}
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: ubuntu-latest
+            artifact: wheel-linux-x86_64
+          - os: macos-latest
+            artifact: wheel-macos-aarch64
+          - os: windows-latest
+            artifact: wheel-windows-x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: wheel-linux-x86_64
+          name: ${{ matrix.artifact }}
           path: dist
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
-      # Proves the abi3 claim: a wheel built on one Python must import on the
-      # oldest supported one.
-      - run: pip install numpy dist/*.whl
-      - run: python -c "import serra_mesh, numpy as np; a=np.zeros((8,8,8),np.uint32); a[2:6,2:6,2:6]=1; m=serra_mesh.Mesher().mesh(a, close=True).get(1); assert m.is_closed(); print('ok', serra_mesh.__version__, len(m.faces), 'faces')"
+          python-version: ${{ matrix.python }}
+      # This is the abi3 claim under test. One wheel, built by whichever Python
+      # the runner happened to have, must install and pass the suite on all six
+      # interpreters. If abi3 were ever broken or dropped, every row but one
+      # would fail here rather than in someone's environment after release.
+      - name: Install the built wheel
+        shell: bash
+        run: pip install pytest numpy dist/*.whl
+      - name: Import and mesh something
+        shell: bash
+        run: |
+          python -c "
+          import numpy as np, serra_mesh
+          a = np.zeros((8, 8, 8), np.uint32); a[2:6, 2:6, 2:6] = 1
+          m = serra_mesh.Mesher().mesh(a, close=True).get(1)
+          assert m.is_closed()
+          print('ok', serra_mesh.__version__, len(m.faces), 'faces')
+          "
+      # Against the installed wheel, not an editable build, so packaging
+      # mistakes -- a missing python-source file, a bad module-name -- show up.
+      - name: Run the test suite
+        shell: bash
+        run: pytest tests -q
+
+  publish:
+    name: publish to PyPI
+    needs: [check-version, build, sdist, test-wheel]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI verifies this workflow's OIDC identity, so there
+    # is no API token to store or leak. Configure the publisher on PyPI for
+    # AllenInstitute/serra, workflow wheels.yml, environment pypi. For the very
+    # first upload the project does not exist yet, so it has to be added as a
+    # *pending* publisher instead.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/serra-mesh
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # release.yml can also publish. Tags pushed by GITHUB_TOKEN do not
+          # trigger workflows, so the two should never both fire for one
+          # version -- but if they ever did, the second should decline rather
+          # than fail the release.
+          skip-existing: true

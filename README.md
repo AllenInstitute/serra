@@ -14,6 +14,9 @@ Documentation at [https://alleninstitute.github.io/serra/]
 pip install serra-mesh
 ```
 
+Building from source needs a Rust toolchain: see the
+[developer guide](https://alleninstitute.github.io/serra/developer/#building-from-source).
+
 ```python
 import serra_mesh
 
@@ -124,7 +127,9 @@ python bench/render_segment.py --zmesh ../zmesh --out docs/images
 
 ## Performance
 
-On the 512³ connectomics volume (2524 objects), Apple M4 Pro (14 cores):
+On the 512³ connectomics volume (2524 objects), Apple M4 Pro (14 cores), against
+zmesh 1.15.0 from PyPI. Each figure is the median of three runs, one process per
+implementation so peak RSS is not contaminated:
 
 Both libraries at their own defaults, so neither closes objects at the volume
 boundary:
@@ -189,11 +194,11 @@ time:
 
 | threads | `mesh()` | speedup | peak RSS |
 | --- | --- | --- | --- |
-| 1 | 1.52 s | 1.0× | 2.0 GB |
-| 2 | 0.95 s | 1.6× | |
-| 4 | 0.54 s | 2.8× | |
-| 8 | 0.33 s | 4.6× | |
-| 14 | 0.29 s | 5.2× | 2.8 GB |
+| 1 | 1.86 s | 1.0× | 3.0 GB |
+| 2 | 1.45 s | 1.3× | 3.2 GB |
+| 4 | 0.83 s | 2.2× | 3.2 GB |
+| 8 | 0.61 s | 3.0× | 3.6 GB |
+| 14 | 0.47 s | 4.0× | 4.0 GB |
 
 **Output is byte-identical at every thread count**, which the test suite checks
 directly rather than assuming. The volume is split into bands along one axis; a
