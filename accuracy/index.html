@@ -1,0 +1,1847 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Analytical multi-material meshes from voxelized segmentations">
+      
+      
+      
+      
+        <link rel="prev" href="../chunked/">
+      
+      
+        <link rel="next" href="../pychunkedgraph/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Accuracy and smoothing - serra</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#accuracy-and-smoothing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="serra" class="md-header__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            serra
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Accuracy and smoothing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="serra" class="md-nav__button md-logo" aria-label="serra" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    serra
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AllenInstitute/serra" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AllenInstitute/serra
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recommended workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../chunked/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chunked meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Accuracy and smoothing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-are-choosing-between" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you are choosing between
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What you are choosing between">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-domain-who-owns-a-shared-wall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The domain: who owns a shared wall
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-filter-whether-volume-survives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The filter: whether volume survives
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_deviation-the-bound-on-all-four" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        max_deviation: the bound on all four
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The recommendation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-smoothing-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What smoothing is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accuracy-before-any-smoothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accuracy before any smoothing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accuracy before any smoothing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agreement-with-zmesh-on-real-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agreement with zmesh on real data
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-smoothing-improves-the-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: smoothing improves the surface
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Evidence: smoothing improves the surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#judged-against-an-analytic-solid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Judged against an analytic solid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#thin-structures-decide-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin structures decide it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-real-neuropil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On real neuropil
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-the-domain-choice-is-not-cosmetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: the domain choice is not cosmetic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-it-is-cheap-and-belongs-before-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: it is cheap, and belongs before simplification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smoothing-a-chunked-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing a chunked volume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#effects-of-meshing-on-downsampled-voxels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effects of meshing on downsampled voxels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproducing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pychunkedgraph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PyChunkedGraph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference-implementation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Other implementations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../related-work/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Related work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-are-choosing-between" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you are choosing between
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What you are choosing between">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-domain-who-owns-a-shared-wall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The domain: who owns a shared wall
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-filter-whether-volume-survives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The filter: whether volume survives
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_deviation-the-bound-on-all-four" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        max_deviation: the bound on all four
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The recommendation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-smoothing-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What smoothing is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accuracy-before-any-smoothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accuracy before any smoothing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accuracy before any smoothing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agreement-with-zmesh-on-real-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agreement with zmesh on real data
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-smoothing-improves-the-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: smoothing improves the surface
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Evidence: smoothing improves the surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#judged-against-an-analytic-solid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Judged against an analytic solid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#thin-structures-decide-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thin structures decide it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-real-neuropil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On real neuropil
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-the-domain-choice-is-not-cosmetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: the domain choice is not cosmetic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-it-is-cheap-and-belongs-before-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence: it is cheap, and belongs before simplification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smoothing-a-chunked-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing a chunked volume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#effects-of-meshing-on-downsampled-voxels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effects of meshing on downsampled voxels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproducing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproducing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="accuracy-and-smoothing">Accuracy and smoothing</h1>
+<p>How close serra's surface is to the truth, and what the smoothing options do.</p>
+<p>The structural properties below — closed, 2-manifold, correctly oriented, the
+right Euler characteristic, no vertex past its bound, seams bit-identical
+between chunks — are enforced by the test suite. The figures come from the
+benchmark named in each section.</p>
+<h2 id="what-you-are-choosing-between">What you are choosing between</h2>
+<p>Smoothing is off by default. When you turn it on there are exactly <strong>two
+independent choices</strong>, and the named parameters are the four cells of that grid:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Laplacian step</th>
+<th>Taubin step pair</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>per label</strong></td>
+<td><code>relaxation=k</code></td>
+<td><code>taubin=k</code></td>
+</tr>
+<tr>
+<td><strong>per cell</strong></td>
+<td><code>fairing=k</code></td>
+<td><strong><code>fairing=k</code> + <code>fairing_taubin=True</code></strong></td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>domain</strong> decides whether objects that touch each other stay a partition of
+space. The <strong>filter</strong> decides whether volume survives. They are orthogonal
+problems and each is solved by one axis of the grid, which is why the
+recommendation is the corner that solves both.</p>
+<p>All four run inside <code>mesh()</code>, so a mesh is always smoothed <em>before</em> <code>get()</code>
+simplifies it — the order that measures better. All four obey <code>max_deviation</code>.
+All four pin the outermost layer of cells, so chunked meshing still stitches by
+exact vertex equality. The three entry parameters (<code>relaxation</code>, <code>taubin</code>,
+<code>fairing</code>) are mutually exclusive; <code>fairing_taubin</code> is a modifier on <code>fairing</code>.</p>
+<h3 id="the-domain-who-owns-a-shared-wall">The domain: who owns a shared wall</h3>
+<p>In dense neuropil <strong>88.6% of distinct vertex positions belong to more than one
+label</strong>. Most surface is interface, not exterior boundary.</p>
+<p><strong>Per label</strong> (<code>relaxation</code>, <code>taubin</code>) fairs each object's own mesh. Two objects
+sharing a wall hold two separate copies of it and each is smoothed independantly.
+Because of this, each copy can drift apart, by up to <strong>2.2 voxels (71 nm)</strong> on
+real neuropil. Each object stays individually watertight and manifold, but the
+meshes no longer reflect a perfect partitioning of space like the voxels
+they were derived from.</p>
+<p><strong>Per cell</strong> (<code>fairing</code>) smooths one position per cell, shared by every label
+present there. The two copies of a wall are then the same number and cannot
+disagree, at any iteration count. It is also <em>less</em> destructive at matched
+operator and iteration count — 93.9% of true volume against 84.0% — because a
+shared node is pulled by neighbours drawn from every label meeting there, and
+those neighbours agree with one another.</p>
+<p><code>fairing_junction_rule</code> (on by default) restricts cells where three or more
+labels meet to their junction neighbours, so those vertices slide <em>along</em> the
+junction curve instead of being pulled off it by the ordinary walls that also
+meet there.</p>
+<h3 id="the-filter-whether-volume-survives">The filter: whether volume survives</h3>
+<p><strong>Laplacian</strong> (<code>relaxation</code>, or <code>fairing</code> alone) moves each vertex a fraction of
+the way to its neighbours' average. It is diffusion, and diffusion shrinks. It
+is strikingly efficient at buying normal accuracy — 3 passes reach what Taubin
+needs 20 for — but it removes a roughly fixed <em>depth</em> from every surface, so the
+relative cost scales as <strong>1/r</strong>. That is fine for a cell body and ruinous for
+thin objects, such as a spine neck.</p>
+<p><strong>Taubin</strong> (<code>taubin</code>, or <code>fairing_taubin=True</code>) alternates a positive step
+<code>lambda</code> with a larger negative one, <code>mu</code>, derived from the pass band. The pair
+is a low-pass filter rather than a diffusion: the low graph frequencies carrying
+an object's bulk come through at close to unit gain, so the surface can be
+smoothed hard without the volume draining away. It costs two passes per
+iteration instead of one.</p>
+<h3 id="max_deviation-the-bound-on-all-four"><code>max_deviation</code>: the bound on all four</h3>
+<p><code>max_deviation</code> (in voxels, default 0.5) caps how far any vertex may move from
+where local placement put it — per axis, against the <em>original</em> position rather
+than per step. Tightening it monotonically reduces shrinkage: on a radius-20
+sphere at <code>relaxation=25</code>, volume error goes −6.42% → −2.99% → −1.09% as it
+tightens 0.5 → 0.25 → 0.1.</p>
+<p>It is a safety rail, not a substitute for choosing the right filter. It bounds
+how far the surface can stray from the data; it does not remove the Laplacian's
+systematic inward bias, it only clips it.</p>
+<h3 id="the-recommendation">The recommendation</h3>
+<p><strong><code>fairing=20, fairing_taubin=True</code>.</strong> Cell domain so touching objects cannot
+drift, Taubin so thin processes keep their volume.</p>
+<ul>
+<li>Use <code>taubin=k</code> instead if every object is isolated — same result, slightly
+  less bookkeeping.</li>
+<li>Reach for a plain Laplacian only when nothing about the mesh will be measured
+  and the iteration budget is tight.</li>
+</ul>
+<h3 id="what-smoothing-is-not">What smoothing is not</h3>
+<p>It is not super-resolution. Smoothing the mesh of a downsampled segmentation
+does <strong>not</strong> recover the boundary that downsampling discarded — measured in
+<a href="#when-the-voxels-are-not-the-truth">When the voxels are not the truth</a>. Its job
+is to remove the staircase the dual grid introduces, and that is all.</p>
+<p>Nor does it change topology: genus survives and one-voxel-thick sheets do not
+collapse, in any cell of the grid, at any iteration count.</p>
+<h2 id="accuracy-before-any-smoothing">Accuracy before any smoothing</h2>
+<p>Measured against exact volume and area, isotropic voxels, no smoothing:</p>
+<table>
+<thead>
+<tr>
+<th>shape</th>
+<th>volume</th>
+<th>area</th>
+<th>mean normal error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sphere, r = 8…32</td>
+<td>&lt; 0.11%</td>
+<td>+2.8 - 3.0%</td>
+<td>8.1°</td>
+</tr>
+<tr>
+<td>ellipsoid 30/20/12</td>
+<td>+0.17%</td>
+<td>+3.3%</td>
+<td>8.6°</td>
+</tr>
+<tr>
+<td>cylinder, any axis</td>
+<td>−1.48%</td>
+<td>−0.47%</td>
+<td></td>
+</tr>
+<tr>
+<td>torus R25 r8</td>
+<td>+0.24%</td>
+<td>+2.9%</td>
+<td></td>
+</tr>
+<tr>
+<td>ellipsoid on 4×4×40 nm voxels</td>
+<td>−0.21%</td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Area is overstated by about 3%</strong> on smooth surfaces
+and does not shrink with resolution, because placing a cell's vertex at the
+centroid of its edge crossings leaves the surface slightly faceted; marching
+cubes has the same non-convergence at roughly +9%. </p>
+<h3 id="agreement-with-zmesh-on-real-data">Agreement with zmesh on real data</h3>
+<p>In order to validate that the meshing code here produces similar meshes to 
+a widely used meshing algorithm. We ran tests (<code>bench/validate_winding.py</code>) 
+to classifies sample points as inside or outside meshes  with a robust
+generalized winding number. Running the same points on two meshing routines
+allow us to measure how much the two meshers disagree. </p>
+<p>If the meshes are similar, most points will agree and therefore 
+the volume estimate will be similar.  Further, the points which 
+do not agree will lie very near the surface of the mesh. </p>
+<p>Significant disagreements should produce many points which do not agree
+and therefore produce different volume estimates, and the points of
+disagreement will be far from the mesh boundary. </p>
+<p>We tested on a fixture of a 512³ cutout of dense MICrONS neuropil at 
+32×32×40 nm holding <strong>20,840 objects with a median size of 56 voxels</strong>,
+We chose 24 objects that spanned the range of sizes, 
+and sampled 20,000 points from each object.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>serra volume / true voxel volume</td>
+<td><strong>0.982</strong> (0.918–1.005)</td>
+</tr>
+<tr>
+<td>zmesh volume / true voxel volume</td>
+<td>0.968 (0.918–0.991)</td>
+</tr>
+<tr>
+<td>winding-number agreement</td>
+<td>94.7% of sampled points</td>
+</tr>
+<tr>
+<td>disagreeing points, distance to surface</td>
+<td>median <strong>0.47</strong> vx, worst <strong>2.11</strong></td>
+</tr>
+<tr>
+<td>all sampled points, distance to surface</td>
+<td>median 4.98 vx</td>
+</tr>
+</tbody>
+</table>
+<p>serra sits closer to the voxel truth than zmesh, but largely agrees on sampled
+points.  Every disagreement is a boundary effect, with the farthest disagreeing
+point found 2 voxels from a surface, with a median of less than half a voxel.
+Remember, most objects are thin so the 94.7% raw rate includes many points
+which are very near a surface. </p>
+<h2 id="evidence-smoothing-improves-the-surface">Evidence: smoothing improves the surface</h2>
+<h3 id="judged-against-an-analytic-solid">Judged against an analytic solid</h3>
+<p>A different way of measuring accuracy is to start with a known object where
+you can analytically derive whether a point should be inside or outside the
+object. <code>bench/analytic_tube.py</code> creates a tube defined by a smooth closed
+space curve and a radius. The curve winds around the z axis while oscillating
+along it, presenting every orientation to the grid. This can be queried
+exactly at any floating-point coordinate. It uses this to classify voxels on
+a grid as in or out to produce input for meshing, but then can also measure
+any floating point mesh vertex to see how far from the true surface it is.
+Error is the analytic signed distance at area-weighted sample points on the
+mesh: a perfect mesh scores zero, and the signed mean says which side it
+sits on.</p>
+<p><img alt="analytic tube, radius 4" src="../images/analytic_tube_r4.png" /></p>
+<p>This is the most favourable setting for smoothing that exists — the true surface
+really is smooth, so everything separating it from the voxelisation is
+quantisation noise and there is no real detail to destroy.</p>
+<table>
+<thead>
+<tr>
+<th>radius 4 voxels</th>
+<th>mean |error|</th>
+<th>bias</th>
+<th>volume</th>
+<th>IoU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh (marching cubes)</td>
+<td>0.141 vx</td>
+<td>−0.021</td>
+<td>−1.18%</td>
+<td>93.48%</td>
+</tr>
+<tr>
+<td>serra, no smoothing</td>
+<td>0.109 vx</td>
+<td>−0.043</td>
+<td>−2.15%</td>
+<td>94.99%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>0.068 vx</td>
+<td>−0.009</td>
+<td>−0.40%</td>
+<td>96.85%</td>
+</tr>
+<tr>
+<td><strong><code>fairing=20 + taubin</code></strong></td>
+<td><strong>0.068 vx</strong></td>
+<td><strong>−0.010</strong></td>
+<td><strong>−0.42%</strong></td>
+<td><strong>96.85%</strong></td>
+</tr>
+<tr>
+<td><code>fairing=40 + taubin</code></td>
+<td>0.063 vx</td>
+<td>+0.021</td>
+<td>+1.08%</td>
+<td>96.98%</td>
+</tr>
+</tbody>
+</table>
+<p>Every row carries 13,504 faces: smoothing moves vertices and never changes
+topology, so this compares placements of one mesh.</p>
+<p><strong>Smoothing recovers the surface the grid hid.</strong> Mean error falls 38% and the
+bias converges on zero — at 20 sweeps the surface is unbiased to within a
+hundredth of a voxel and the enclosed volume is within half a percent of
+analytic. serra beats marching cubes at every radius, by 10–25% in mean surface
+error, with the largest gap on the thinnest tube.</p>
+<p><strong>The two domains agree to three decimal places</strong>, which is why this fixture is
+run here. A tube is a single object, and on a single object the cell and label
+domains are the same graph — anything but agreement would mean the cell-domain
+implementation was wrong. What the cell domain <em>buys</em> a one-object fixture
+structurally cannot show; that is the neuropil measurement
+<a href="#evidence-the-domain-choice-is-not-cosmetic">below</a>.</p>
+<h3 id="thin-structures-decide-it">Thin structures decide it</h3>
+<p>The same experiment at three radii — mean surface error in voxels, then IoU:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>r=2</th>
+<th>r=4</th>
+<th>r=8</th>
+<th></th>
+<th>r=2</th>
+<th>r=4</th>
+<th>r=8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zmesh</td>
+<td>0.145</td>
+<td>0.141</td>
+<td>0.147</td>
+<td></td>
+<td>86.8%</td>
+<td>93.5%</td>
+<td>96.7%</td>
+</tr>
+<tr>
+<td>no smoothing</td>
+<td>0.127</td>
+<td>0.109</td>
+<td>0.107</td>
+<td></td>
+<td>87.9%</td>
+<td>95.0%</td>
+<td>97.6%</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>0.217</td>
+<td>0.123</td>
+<td>0.087</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>0.087</td>
+<td>0.068</td>
+<td>0.067</td>
+<td></td>
+<td>91.9%</td>
+<td>96.8%</td>
+<td>98.5%</td>
+</tr>
+<tr>
+<td><code>fairing=20 + taubin</code></td>
+<td>0.087</td>
+<td>0.068</td>
+<td>0.068</td>
+<td></td>
+<td>91.9%</td>
+<td>96.9%</td>
+<td>98.5%</td>
+</tr>
+<tr>
+<td><strong><code>fairing=40 + taubin</code></strong></td>
+<td><strong>0.079</strong></td>
+<td><strong>0.063</strong></td>
+<td><strong>0.063</strong></td>
+<td></td>
+<td><strong>92.6%</strong></td>
+<td><strong>97.0%</strong></td>
+<td><strong>98.5%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><img alt="analytic tube, radius 2" src="../images/analytic_tube_r2.png" /></p>
+<p>Read down the radius columns rather than across the rows. Every method improves
+as the tube thickens, but not at the same rate: at radius 8 even plain
+<code>relaxation=3</code> is respectable at 0.087 voxels, while at radius 2 it is <em>worse
+than not smoothing at all</em> and <code>relaxation=10</code> — 0.475 / 0.264 / 0.156 — removes
+41% of the volume, dropping IoU to <strong>59.1%</strong>. This is the 1/r term, and it is
+worst exactly where
+connectomics lives. Taubin's shrink compensation removes that term, which is why
+its advantage grows in the same direction the Laplacian's damage does.</p>
+<h3 id="on-real-neuropil">On real neuropil</h3>
+<p>We can compare the volume of an object measured by counting voxels versus the
+volume of a mesh after smoothing to assess it's shrinkage.<br />
+This is potentially more impactful on real data than on geometric forms. 
+A sphere has almost no surface to lose; a 200 nm spine neck does. 
+So we measured the effects of smoothing on the volume and areas on 24 objects
+between the 70th and 99th size percentile in the MICrONS cutout.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>volume / true</th>
+<th>area / unsmoothed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>99.98%</td>
+<td>100.0%</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>97.51%</td>
+<td>89.4%</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td>93.06%</td>
+<td>83.2%</td>
+</tr>
+<tr>
+<td><code>taubin=3</code></td>
+<td><strong>100.12%</strong></td>
+<td>95.5%</td>
+</tr>
+<tr>
+<td><code>taubin=10</code></td>
+<td><strong>100.44%</strong></td>
+<td>93.0%</td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td><strong>100.93%</strong></td>
+<td>92.2%</td>
+</tr>
+</tbody>
+</table>
+<p>Laplacian relaxation eats 2.5% of the volume at <code>k=3</code> and 7% at <code>k=10</code>. Taubin
+holds it while removing a comparable amount of surface area. </p>
+<p>The same holds visually, on a 5 µm cutout of dendrite <code>864691136144674612</code> at
+32×32×40 nm, flat shaded so individual triangles stay visible. </p>
+<p><img alt="smoothing filters compared" src="../images/smoothing_864691136144674612.png" /></p>
+<p>We also added a comparison to VTK's Nuttall
+window — added specifically to stop the shrinkage — is indistinguishable from the built-in filter at matched passes,
+both by eye and by the numbers (93.8% of original area and 9.8° mean dihedral
+against 93.9% and 9.9°). </p>
+<h2 id="evidence-the-domain-choice-is-not-cosmetic">Evidence: the domain choice is not cosmetic</h2>
+<p>Measured on a 128³ neuropil subvolume with one shared Jacobi operator, six
+iterations, <code>max_deviation = 0.5</code> — so the operator and the iteration count are
+held fixed and the domain is the only variable:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>area / raw</th>
+<th>volume / voxel truth</th>
+<th>wall drift, median</th>
+<th>max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>100.0%</td>
+<td>97.99%</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>per label</td>
+<td>84.3%</td>
+<td>84.00%</td>
+<td>0.103 vx</td>
+<td><strong>2.224 vx</strong></td>
+</tr>
+<tr>
+<td>cell domain</td>
+<td>93.4%</td>
+<td>93.92%</td>
+<td><strong>0</strong></td>
+<td><strong>0</strong></td>
+</tr>
+<tr>
+<td><strong>cell domain + Taubin</strong></td>
+<td>97.3%</td>
+<td>97.12%</td>
+<td><strong>0</strong></td>
+<td><strong>0</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Two labels' copies of the same wall end up as much as 2.2 voxels — 71 nm —
+apart under per-label smoothing. Exactly zero in the cell domain, at any
+iteration count, because there is only one number to begin with.</p>
+<p>The volume column carries the second point: at identical operator and iteration
+count the cell domain is also markedly less destructive, 93.9% against 84.0%.
+Adding Taubin recovers the rest. The two axes compose, which is the whole
+argument for the recommended corner of the grid.</p>
+<h2 id="evidence-it-is-cheap-and-belongs-before-simplification">Evidence: it is cheap, and belongs before simplification</h2>
+<p>512³ MICrONS volume, 2523 objects, Apple M4 Pro (14 cores), median of three
+runs. <code>get()</code> covers extracting every object.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>mesh()</code></th>
+<th><code>get()</code></th>
+<th>total</th>
+<th>1 thread</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>0.28 s</td>
+<td>0.98 s</td>
+<td><strong>1.26 s</strong></td>
+<td>1.62 s</td>
+</tr>
+<tr>
+<td><code>relaxation=3</code></td>
+<td>0.48 s</td>
+<td>0.92 s</td>
+<td>1.40 s</td>
+<td>3.21 s</td>
+</tr>
+<tr>
+<td><code>taubin=2</code></td>
+<td>0.51 s</td>
+<td>0.94 s</td>
+<td>1.45 s</td>
+<td>3.49 s</td>
+</tr>
+<tr>
+<td><code>taubin=5</code></td>
+<td>0.68 s</td>
+<td>0.96 s</td>
+<td>1.64 s</td>
+<td>4.88 s</td>
+</tr>
+</tbody>
+</table>
+<p>Smoothing is added work and cannot be free.  <code>taubin=2</code> costs
+about what <code>relaxation=3</code> does. Cost splits about evenly between building the
+vertex adjacency — once per object, whatever the iteration count — and the
+passes themselves, so the <em>first</em> iteration is more expensive than the
+tenth.</p>
+<p><strong>Smooth first.</strong> At a 10× reduction, with VTK quadric decimation on both paths
+so the order is the only variable:</p>
+<table>
+<thead>
+<tr>
+<th>order</th>
+<th>mean distance to full-res</th>
+<th>worst</th>
+<th>volume kept</th>
+<th>roughness</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>simplify only</td>
+<td>0.100 vx</td>
+<td>0.70</td>
+<td>97.8%</td>
+<td>33.6°</td>
+</tr>
+<tr>
+<td>Taubin then simplify</td>
+<td>0.103 vx</td>
+<td>0.48</td>
+<td>98.2%</td>
+<td>26.3°</td>
+</tr>
+<tr>
+<td>simplify then Taubin</td>
+<td>0.325 vx</td>
+<td>2.71</td>
+<td>88.6%</td>
+<td>22.8°</td>
+</tr>
+</tbody>
+</table>
+<p>Smoothing first costs essentially nothing in fidelity and improves the worst
+case; smoothing afterwards deviates 3× further and loses 11% of the volume,
+because a decimated mesh has no high-frequency detail left to remove and the
+filter eats structure instead. serra gets this order for free — smoothing
+happens in <code>mesh()</code>, simplification in <code>get()</code>.</p>
+<h2 id="smoothing-a-chunked-volume">Smoothing a chunked volume</h2>
+<p>All four settings pin the outermost layer of cells, so seam vertices stay
+bit-identical between neighbouring chunks and stitching by exact vertex equality
+still works. This is <em>not</em> true of a post-hoc smoother applied to the output.</p>
+<p>The trade-off serra accepts by pinning: a chunk's interior smooths slightly more
+than the band around its seams, so a stitched surface is self-consistent and
+watertight but not identical to the same volume smoothed in one piece. Sphere of
+radius 60 in a 144³ volume at <code>taubin=10</code>, positive-only halo of 2:</p>
+<table>
+<thead>
+<tr>
+<th>chunk</th>
+<th>chunks</th>
+<th>pinned</th>
+<th>stitches</th>
+<th>faces = whole-volume</th>
+<th>median</th>
+<th>worst</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16³</td>
+<td>296</td>
+<td>12.2%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.004 vx</td>
+<td>0.171 vx</td>
+</tr>
+<tr>
+<td>36³</td>
+<td>57</td>
+<td>5.4%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.174 vx</td>
+</tr>
+<tr>
+<td>72³</td>
+<td>8</td>
+<td>2.1%</td>
+<td>yes</td>
+<td>yes</td>
+<td>0.000 vx</td>
+<td>0.129 vx</td>
+</tr>
+</tbody>
+</table>
+<h2 id="effects-of-meshing-on-downsampled-voxels">Effects of meshing on downsampled voxels</h2>
+<p>Every number above treats the array being meshed as ground truth. In a
+connectomics pipeline it usually is not. MICrONS is segmented at 8×8×40 nm and
+meshed at 32×32×40 for speed and memory, so serra sees a 4×4×1 <strong>downsample</strong> of
+a segmentation that already locates the boundary four times more precisely in x
+and y.</p>
+<p>That raises a fair question about everything above: against the coarse voxels,
+Laplacian smoothing "loses volume" and looks like damage — but against the fine
+segmentation the coarse array was made from, might the same displacement be
+<em>recovering</em> the boundary that downsampling discarded?</p>
+<p>It does not. <code>bench/resolution_fidelity.py</code> fetches both resolutions of the same
+box — segment <code>864691136144674612</code>, a 5 µm cube, 135,555 coarse voxels against
+2,172,904 fine ones — and scores every row on the same million sample points.
+The coarse array agrees with a majority downsample of the fine one on 99.74% of
+voxels, so this measures serra and not the downsampler.</p>
+<table>
+<thead>
+<tr>
+<th>mesh</th>
+<th>faces</th>
+<th>volume vs fine</th>
+<th>IoU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no smoothing</td>
+<td>99,128</td>
+<td>−0.95%</td>
+<td>94.073%</td>
+</tr>
+<tr>
+<td><code>relaxation=10</code></td>
+<td>99,128</td>
+<td>−3.96%</td>
+<td><strong>92.860%</strong></td>
+</tr>
+<tr>
+<td><code>taubin=20</code></td>
+<td>99,128</td>
+<td>−0.50%</td>
+<td>94.105%</td>
+</tr>
+<tr>
+<td><strong>coarse topology, fine placement</strong></td>
+<td>99,128</td>
+<td>−0.66%</td>
+<td><strong>98.341%</strong></td>
+</tr>
+<tr>
+<td>fine mesh, decimated 9×</td>
+<td>101,560</td>
+<td>−0.21%</td>
+<td>99.926%</td>
+</tr>
+<tr>
+<td>fine mesh (the ceiling)</td>
+<td>914,048</td>
+<td>−0.16%</td>
+<td>100%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Smoothing does not recover the fine boundary.</strong> Taubin is neutral — 0.03
+points of a 5.93-point gap, inside the sampling noise. Laplacian relaxation is
+actively worse: mean distance to the fine surface rises from 8.2 nm to 10.3 nm
+at <code>relaxation=10</code>, because it shrinks <em>past</em> the true surface rather than
+converging on it. So the volume loss reported elsewhere on this page is real
+error, not a correction.</p>
+<p><strong>Nor is the triangle budget what costs you</strong> — the fine mesh decimated to the
+coarse face count still reaches 99.93%, so the whole deficit is the 32 nm
+sampling. What works is placing the coarse vertices from fine data: keeping the
+coarse topology exactly and moving each vertex onto the fine surface, clamped to
+its own cell as serra's placement already guarantees, recovers <strong>4.27 of the
+5.93 points</strong> and drops mean distance to 0.1 nm. That is a prototype rather than
+a feature — it projects onto a mesh built from the whole fine array, so it shows
+the <em>value</em> of fine-resolution placement and not a cheap way to get it, and it
+is measured on one segment.</p>
+<h2 id="reproducing">Reproducing</h2>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>bench
+
+python<span class="w"> </span>bench/download_microns.py<span class="w">       </span><span class="c1"># re-fetch the neuropil cutout</span>
+python<span class="w"> </span>bench/validate_winding.py<span class="w">       </span><span class="c1"># serra against zmesh</span>
+python<span class="w"> </span>bench/analytic_tube.py<span class="w"> </span>--render<span class="w"> </span><span class="c1"># analytic solid, all radii, figures</span>
+python<span class="w"> </span>bench/cell_smoothing.py<span class="w">         </span><span class="c1"># the domain comparison</span>
+python<span class="w"> </span>bench/taubin.py<span class="w">                 </span><span class="c1"># filters, cost, order, chunking</span>
+python<span class="w"> </span>bench/resolution_fidelity.py<span class="w">    </span><span class="c1"># coarse against fine</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
