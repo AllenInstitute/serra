@@ -1,10 +1,5 @@
 # Recommended workflow
 
-The [quickstart](index.md) shows the three calls. This page is what to actually
-set, and what a real job looks like end to end.
-
-## The settings to use
-
 ```python
 import serra_mesh
 
