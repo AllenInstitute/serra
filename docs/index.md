@@ -23,6 +23,10 @@ mesher.mesh(cutout)          # a 3-D array of unsigned integer labels
 mesh = mesher.get(504)       # mesh.vertices, mesh.faces
 ```
 
+For the settings to use and a full job — every mesh in a volume, levels of
+detail, dicing meshes and volumes too large for memory — see
+[Recommended workflow](workflow.md).
+
 ## Install
 
 ```bash

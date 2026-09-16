@@ -20,6 +20,7 @@ theme:
 nav:
   - Home: index.md
   - Guide:
+      - Recommended workflow: workflow.md
       - Chunked meshing: chunked.md
       - Accuracy and smoothing: accuracy.md
       - PyChunkedGraph: pychunkedgraph.md
