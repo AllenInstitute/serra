@@ -1,6 +1,6 @@
 # serra
 
-Analytical multi-material meshes from voxelized segmentations in Rust.
+Analytical multi-material meshes from voxelized segmentations, written in Rust with Python bindings.
 
 ![Tall curving weathering-steel plates by Richard Serra forming intersecting passages in a Basel square](https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Richard_Serra_-_Intersections_-_Basel_2019-04.jpg/960px-Richard_Serra_-_Intersections_-_Basel_2019-04.jpg)
 
