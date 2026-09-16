@@ -9,10 +9,8 @@ Both were built and run against the same 512³ connectomics volume serra is
 benchmarked on. Because all three implement the same algorithm, the comparison
 is direct — mesh against mesh, face for face.
 
-zmesh is in both tables below as well, but on different terms. It is marching
-cubes, so it is a scale reference rather than a check: it
-is *expected* to disagree on content, and the interesting question about it is not whether
-it matches but what it costs.
+zmesh is in both tables below as well,  it
+is *expected* to disagree on content, but is included as a comparison on cost.
 
 ## Results
 
@@ -36,8 +34,7 @@ because it meshes the background as an ordinary material; on a single sphere all
 three give **3038 vertices and 6072 triangles**, watertight, enclosing exactly
 8255.0 units of volume for 8255 voxels.
 
-Three independent implementations agreeing to the face is the strongest
-available evidence that the method is right in all three.
+
 
 ### Speed and memory
 
@@ -220,8 +217,4 @@ python bench/analytic_tube.py --radius 4                   # accuracy
 
 `--zmesh` points at a local zmesh checkout, because zmesh is deliberately not a
 declared dependency and the comparison should run against the build you have
-rather than whatever is on PyPI. A zmesh is usually installed in the environment
-too, so a path that does not resolve falls back to it silently; the `zmesh_path`
-field in the JSON records which one actually ran. Per-sweep smoothing is
-`smooth_s / 20` from the `--fairing` and `--smoothing-iterations` runs, and the
-VTK peak is the range across three runs of the same command.
+rather than whatever is on PyPI. 

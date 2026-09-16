@@ -33,10 +33,7 @@ seam has to exist in both.
 
 With a one-voxel overlap it does not. The lower chunk's last cell ends exactly
 where the upper chunk's first cell begins, so neither produces the layer in
-between and the joined surface has a ring-shaped hole. This is measured in the
-test suite: with a one-voxel overlap the lower chunk contributes **zero**
-vertices to the seam band; with a one-voxel halo both contribute the same 56,
-matching the whole-volume mesh bit for bit.
+between and the joined surface has a ring-shaped hole. 
 
 !!! note "Marching cubes differs here"
     zmesh needs only a one-voxel overlap, because its vertices sit on voxel

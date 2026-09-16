@@ -1,11 +1,19 @@
 # serra
 
-Analytical multi-material meshes from voxelized segmentations.
+Analytical multi-material meshes from voxelized segmentations in Rust.
 
-serra turns a 3-D array of integer labels into one triangle mesh per label. It
-is built for connectomics-scale data, where a single chunk may hold hundreds of
-thousands of distinct objects, so it makes **one pass over the volume** however
-many labels are present.
+![Tall curving weathering-steel plates by Richard Serra forming intersecting passages in a Basel square](https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Richard_Serra_-_Intersections_-_Basel_2019-04.jpg/960px-Richard_Serra_-_Intersections_-_Basel_2019-04.jpg)
+
+Richard Serra, *Intersections*, Basel. Photo by
+[Zinneke](https://commons.wikimedia.org/wiki/User:Zinneke), licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), [via Wikimedia
+Commons](https://commons.wikimedia.org/wiki/File:Richard_Serra_-_Intersections_-_Basel_2019-04.jpg).
+
+serra turns a 3-D array of integer labels into one triangle mesh per label. 
+serra uses **multi-label surface nets** (dual contouring) rather than marching cubes,
+following [Frisken (2022)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9623606/) — see
+[references.md](references.md). It is built for connectomics-scale data,
+where a single chunk may hold hundreds of thousands of distinct objects, so it makes **one pass over the volume** however many labels are present.
 
 ```python
 import serra_mesh

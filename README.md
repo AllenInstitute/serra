@@ -1,7 +1,14 @@
 # serra
 
-Analytical multi-material meshes from voxelized segmentations.
+Analytical multi-material meshes from voxelized segmentations, written in Rust.
 It is named after the artist Richard Serra, who is known for making beautiful smooth geometric forms out of rusted metal.
+
+![Tall curving weathering-steel plates by Richard Serra forming intersecting passages in a Basel square](https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Richard_Serra_-_Intersections_-_Basel_2019-04.jpg/960px-Richard_Serra_-_Intersections_-_Basel_2019-04.jpg)
+
+Richard Serra, *Intersections*, Basel. Photo by
+[Zinneke](https://commons.wikimedia.org/wiki/User:Zinneke), licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), [via Wikimedia
+Commons](https://commons.wikimedia.org/wiki/File:Richard_Serra_-_Intersections_-_Basel_2019-04.jpg).
 
 `serra` turns a 3-D array of integer labels into one triangle mesh per label. It is
 built for connectomics-scale data, where a single chunk may contain hundreds of
@@ -77,15 +84,10 @@ objects. See [docs/accuracy.md](docs/accuracy.md).
 ## How it looks
 
 Three objects from the 512³ MICrONS test volume, meshed by zmesh and by serra
-and rendered from an identical camera with flat shading. Flat shading is
-deliberate — it makes individual triangles visible, which is exactly what
-distinguishes a staircased surface from a smooth one.
+and rendered from an identical camera with flat shading. 
 
-The objects are sampled around the 80th size percentile rather than taken from
-the top: the largest object in a cutout is a cell body or a trunk crossing the
-whole box, and says little about the surfaces most objects get. The top row of
-each figure is the whole object, the bottom row a close-up spanning 1400 nm of
-the same surface.
+The top row of each figure is the whole object, the bottom row a close-up 
+spanning 1400 nm of the same surface.
 
 | | |
 | --- | --- |
@@ -93,21 +95,17 @@ the same surface.
 | ![object 79445759](docs/images/compare_2_label79445759.png) | 42K voxels, 54K faces |
 | ![object 60033456](docs/images/compare_3_label60033456.png) | 47K voxels, 57K faces |
 
-Marching cubes produces axis-aligned terraces because its vertices are pinned to
-voxel-edge midpoints. serra's are placed inside each cell from where the label
-boundary actually crosses it, so the terracing is gone even before relaxation;
-`relaxation=3` removes the remaining faceting. Face counts are within 1% across
-all three, so this is not a resolution difference.
-
-The same objects decimated 10× — the regime PyChunkedGraph actually stores, and
-the one where the input surface matters most, since a quadric simplifier keeps
-whatever the extractor gave it:
+The same objects decimated 10×:
 
 | | |
 | --- | --- |
 | ![object 28927963 simplified](docs/images/simplified_1_label28927963.png) | 47K → 4.7K faces |
 | ![object 79445759 simplified](docs/images/simplified_2_label79445759.png) | 54K → 5.4K faces |
 | ![object 60033456 simplified](docs/images/simplified_3_label60033456.png) | 57K → 5.7K faces |
+
+The results are less visually strikingly different, but the serra smoothing
+maintains perfect partitioning of the space and has no non-watertight mesh
+objects.
 
 ### Against the mesh MICrONS publishes
 
@@ -144,8 +142,7 @@ boundary:
 zmesh has no threading, so the fair single-threaded comparison is the first
 column: it is about 1.6× faster at traversing the volume there. Traversal scales
 to 4.3× on 14 cores, at the cost of about 1.2 GB for the merge. serra is roughly
-22× faster at extraction, which needs explaining because it is an architectural
-difference rather than a tuning one.
+22× faster at extraction, which is an architectural difference.
 
 Marching cubes emits a **triangle soup**: every triangle carries its own three
 vertices with no sharing. Turning that into an indexed mesh means deduplicating
@@ -179,9 +176,7 @@ serra_mesh.Mesher(threads=1)   # fully sequential
 serra_mesh.Mesher(threads=4)   # exactly four
 ```
 
-**Set `threads=1` if you are already parallelising at a higher level** — one
-chunk per process in a pipeline, say — otherwise every process tries to claim
-every core and they fight each other.
+**Set `threads=1` if you are already parallelising at a higher level** 
 
 Any value above 1 gets a private thread pool, so the setting is honoured
 exactly, is not overridden by `RAYON_NUM_THREADS`, and does not disturb other
@@ -200,11 +195,7 @@ time:
 | 8 | 0.61 s | 3.0× | 3.6 GB |
 | 14 | 0.47 s | 4.0× | 4.0 GB |
 
-**Output is byte-identical at every thread count**, which the test suite checks
-directly rather than assuming. The volume is split into bands along one axis; a
-band cannot emit its own first cell layer's quads, since those read the layer
-below, so a short serial pass produces them afterwards and splices them into
-each label's face list in the position a single traversal would have put them.
+**Output is byte-identical at every thread count**
 
 ## Chunked meshing
 
@@ -215,14 +206,9 @@ therefore what makes their vertices identical.
 
 **One voxel of halo is enough at any `relaxation` setting.** Iterative smoothing
 normally propagates one cell per iteration, which would mean `k` iterations need
-`k + 1` voxels of halo. serra instead holds the outermost layer of cells fixed —
-precisely the vertices whose one-ring the chunk does not fully contain — so
+`k + 1` voxels of halo. serra instead holds the outermost layer of cells fixed so
 relaxation never reads past the halo. A chunk's mesh is therefore reproducible
 from that chunk's own array alone, whatever `k` is.
-
-The trade-off is deliberate: a chunk's interior smooths slightly more than the
-band around its seams, so a stitched surface is self-consistent and watertight,
-but not identical to the same volume meshed in one piece.
 
 ## Naming
 

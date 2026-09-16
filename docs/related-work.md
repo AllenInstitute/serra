@@ -45,49 +45,6 @@ three or more. A mesh-domain algorithm whose neighbourhood is one label's own
 surface therefore processes the same wall twice, from two different
 neighbourhoods, and the two copies drift apart.
 
-## serra already has this bug
-
-serra's own relaxation runs per label. Measured on a 128³ neuropil subvolume
-with one shared Jacobi operator, six iterations, `max_deviation = 0.5`:
-
-| smoothing | area / raw | mean dihedral | angles in [40°,80°] | volume / voxel truth | wall drift, median | max |
-| --- | --- | --- | --- | --- | --- | --- |
-| none | 100.0% | 25.1° | 67.8% | 97.99% | 0 | 0 |
-| **per label** (serra today) | 84.3% | 16.9° | 86.5% | 84.00% | 0.103 vx | **2.224 vx** |
-| cell domain | 93.4% | 21.3° | 87.5% | 93.92% | **0** | **0** |
-| cell domain + LST | 97.3% | 23.4° | 87.7% | 97.12% | **0** | **0** |
-
-Two labels' copies of the same wall end up as much as **2.2 voxels — 71 nm —
-apart**. After smoothing, the segmentation is no longer a partition of space:
-adjacent objects gap or interpenetrate.
-
-The cell-domain rows are also, at identical operator and iteration count,
-markedly *less destructive* — 93.9% of the true volume against 84.0%. A shared
-node is pulled by neighbours drawn from every label meeting there, and those
-neighbours agree with each other; a per-label copy is pulled only by its own
-label's surface, which curves away from the wall.
-
-## The fix: smooth in the cell domain
-
-serra places one vertex per cell as a pure function of that cell's eight corner
-labels (`cell_vertex`, `src/place.rs`), so **every label present in a cell
-already receives the identical position** — and then serra copies it into each
-label's mesh and smooths the copies independently. Smoothing one shared position
-per cell instead:
-
-- makes drift **exactly zero** by construction, at any iteration count;
-- costs **2.04×** less, there being 2.06 label-copies per boundary cell;
-- makes a per-cell structure tensor affordable, one tensor serving every label.
-
-This is Frisken's own formulation, which serra departed from. It is not a new
-idea; it is a gap being closed.
-
-**Wrinkle, measured:** the extractor splits a cell's vertex per surface *sheet*
-where a label touches itself only diagonally, and all sheets share the cell
-position, so welding on position alone would fuse sheets that are deliberately
-separate. That is 0.237% of (cell, label) pairs, affecting 0.483% of cells. The
-prototype gives them private nodes and reports the count.
-
 ## What ports from GAMer, and what does not
 
 **The quality-improvement stage does not port, because serra does not have the
