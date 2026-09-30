@@ -79,6 +79,16 @@ class Mesher:
         Laplacian. Setting this fixes the second without giving up the first.
     fairing_pass_band, fairing_lambda:
         As ``taubin_pass_band`` and ``taubin_lambda``, for that pair.
+    fairing_tangential:
+        Extra sweeps, run after ``fairing``, that move each cell toward its
+        neighbour average **within the surface** only. They even out triangle
+        sizes and shapes without smoothing the shape any further. Where labels
+        meet the rules are stricter: a vertex on a single wall moves in that
+        wall's tangent plane, a vertex on a curve where three or more labels
+        meet moves only along that curve, and a vertex where curves meet stays
+        put. The step is ``fairing_step``, and ``max_deviation`` still bounds
+        every vertex. Can be used with ``fairing=0`` to improve triangles
+        without smoothing at all. See ``bench/tangential.py``.
     taubin_lambda:
         The positive step, in (0, 1). The negative step follows from this and
         ``taubin_pass_band``; a pass band too wide for the chosen lambda is
@@ -139,6 +149,7 @@ class Mesher:
         fairing_taubin: bool = False,
         fairing_pass_band: float = 0.1,
         fairing_lambda: float = 0.63,
+        fairing_tangential: int = 0,
         threads: int = 0,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
@@ -156,6 +167,7 @@ class Mesher:
         self.fairing_taubin = bool(fairing_taubin)
         self.fairing_pass_band = float(fairing_pass_band)
         self.fairing_lambda = float(fairing_lambda)
+        self.fairing_tangential = int(fairing_tangential)
         self.threads = int(threads)
         if self.relaxation < 0:
             raise ValueError("relaxation must be non-negative")
@@ -163,6 +175,8 @@ class Mesher:
             raise ValueError("taubin must be non-negative")
         if self.fairing < 0:
             raise ValueError("fairing must be non-negative")
+        if self.fairing_tangential < 0:
+            raise ValueError("fairing_tangential must be non-negative")
         if self.threads < 0:
             raise ValueError("threads must be non-negative (0 means all cores)")
         self._inner = _serra_mesh.Mesher(
@@ -181,6 +195,7 @@ class Mesher:
             fairing_taubin=self.fairing_taubin,
             fairing_pass_band=self.fairing_pass_band,
             fairing_lambda=self.fairing_lambda,
+            fairing_tangential=self.fairing_tangential,
             threads=self.threads,
         )
 

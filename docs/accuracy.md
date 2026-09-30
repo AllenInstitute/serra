@@ -28,6 +28,9 @@ All four pin the outermost layer of cells, so chunked meshing still stitches by
 exact vertex equality. The three entry parameters (`relaxation`, `taubin`,
 `fairing`) are mutually exclusive; `fairing_taubin` is a modifier on `fairing`.
 
+Separately from the grid, `fairing_tangential=k` improves the *triangles*
+rather than the surface; see [Tangential sweeps](#tangential-sweeps-the-triangles-not-the-surface).
+
 ### The domain: who owns a shared wall
 
 In dense neuropil **88.6% of distinct vertex positions belong to more than one
@@ -79,6 +82,72 @@ tightens 0.5 → 0.25 → 0.1.
 It is a safety rail, not a substitute for choosing the right filter. It bounds
 how far the surface can stray from the data; it does not remove the Laplacian's
 systematic inward bias, it only clips it.
+
+### Tangential sweeps: the triangles, not the surface
+
+`fairing_tangential=k` runs `k` more cell-domain sweeps after `fairing` (which
+may be zero). Each moves a cell `fairing_step` of the way to its neighbours'
+average, **but only within the surface**, so vertices spread out evenly without
+the shape changing. This is the relaxation step of isotropic remeshing
+(Botsch & Kobbelt 2004). Its multi-material rules follow Faraj et al. (2016),
+applied to the cell field rather than a tetrahedral mesh:
+
+| cell | test | may move |
+| --- | --- | --- |
+| **sheet**: one wall between two labels | no junction face | in its tangent plane |
+| **curve**: where three or more labels meet | exactly two junction faces | along the curve only |
+| **corner**: where curves meet or end | anything else | not at all |
+
+A sheet cell's normal is estimated from the half-quads through it: the cell and
+two face neighbours per crossing edge. Their signs are aligned before summing,
+because a cell shared by two labels has no one winding to trust. If they
+disagree too much, the cell holds still rather than round off a crease. That
+happens on a sharp edge or corner of the surface (`|Σn| / Σ|n| < 0.8`), about
+10% of cells after `fairing=20`. The frame is computed once, before the sweeps,
+because they barely change the shape, so a sweep costs about the same as a
+fairing sweep. Moves are bounded by the cell and by `max_deviation`, as fairing
+is. Where either binds, the move is *shortened*, not clamped per axis: per-axis
+clamping of a vertex resting on a cell wall keeps only the part of its move
+along the wall, and that part is no longer tangent. That mistake turned an
+early version back into smoothing, costing 1% of median volume after a plain
+Laplacian. Shared walls stay bit-identical and seams stitch exactly as with
+`fairing`.
+
+`bench/tangential.py`, on a 256³ corner of the MICrONS chunk (closed meshes,
+32×32×40 nm). Quality `q` is 4√3·area / Σ edge², 1 for an equilateral triangle.
+Volume change is against the same row without the tangential sweeps, over
+objects:
+
+| settings | area CV | q mean | q p1 | min angle < 20° | volume change, median |
+| --- | --- | --- | --- | --- | --- |
+| none | 0.265 | 0.884 | 0.634 | 0.7% | — |
+| `fairing_tangential=5` | **0.240** | **0.902** | **0.707** | **0.0%** | 0.069% |
+| `fairing=20` + Taubin | 0.354 | 0.877 | 0.506 | 1.0% | — |
+| + `fairing_tangential=5` | 0.341 | 0.882 | 0.531 | 0.7% | 0.041% |
+| `fairing=10` | 0.362 | 0.877 | 0.468 | 1.4% | — |
+| + `fairing_tangential=5` | 0.361 | 0.877 | 0.468 | 1.3% | 0.014% |
+
+On a radius-20 sphere, 5 sweeps take area CV from 0.260 to 0.228, and volume and
+area error are unchanged to 0.01%. Along a three-label junction curve, vertex
+spacing CV goes from 0.20 to 0.12. On the whole 512³ chunk, 5 sweeps add 11% to
+`fairing=20` + Taubin.
+
+**What limits it.** Moving vertices within the surface cannot change how many
+there are. Serra has one per cell the surface crosses, and a surface at angle
+`n` to the grid crosses `|n|₁` cells per unit area, anywhere from 1 to √3.
+Integrated over a sphere's orientations, that alone is an area CV of 0.11. On
+neuropil, the thin, curved processes pack many cells into little area. The
+remaining spread comes from vertex density, not vertex placement.
+Neither the cell bound nor `max_deviation` is the limit: removing the cell bound
+for these sweeps changes the table above by less than 0.003. The same argument
+is why it does nothing for anisotropic voxels. At 4×4×40 nm, 82% of triangles
+have a smallest angle under 20° with or without it, because each is a cell's
+worth of surface stretched 10:1. Fixing either needs the connectivity to change
+(edge flips, splits and collapses on the shared wall complex), which these
+sweeps deliberately do not do.
+
+**When to use it.** Worth it on an unsmoothed mesh, where it removes slivers
+for almost nothing. After Taubin fairing it is a small, cheap gain.
 
 ### The recommendation
 

@@ -140,6 +140,7 @@ impl Mesher {
         fairing_taubin=false,
         fairing_pass_band=0.1,
         fairing_lambda=0.63,
+        fairing_tangential=0,
         threads=0,
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -159,6 +160,7 @@ impl Mesher {
         fairing_taubin: bool,
         fairing_pass_band: f64,
         fairing_lambda: f64,
+        fairing_tangential: u32,
         threads: usize,
     ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
@@ -189,7 +191,8 @@ impl Mesher {
         // Two filters over the same vertices would be a compounding of bounds
         // nobody could reason about, and the answer to "which one" is a
         // decision, not a blend.
-        if [relaxation > 0, taubin > 0, fairing > 0]
+        let fairing_on = fairing > 0 || fairing_tangential > 0;
+        if [relaxation > 0, taubin > 0, fairing_on]
             .iter()
             .filter(|&&on| on)
             .count()
@@ -199,7 +202,7 @@ impl Mesher {
                 "set only one of relaxation, taubin or fairing",
             ));
         }
-        if fairing > 0 && (!fairing_step.is_finite() || fairing_step <= 0.0 || fairing_step > 1.0) {
+        if fairing_on && (!fairing_step.is_finite() || fairing_step <= 0.0 || fairing_step > 1.0) {
             return Err(PyValueError::new_err("fairing_step must lie in (0, 1]"));
         }
         let taubin_params = Taubin {
@@ -216,7 +219,7 @@ impl Mesher {
                 taubin_params.mu()
             )));
         }
-        let smoothing = if fairing > 0 {
+        let smoothing = if fairing_on {
             Smoothing::Fairing(Fairing {
                 iterations: fairing,
                 step: fairing_step,
@@ -228,6 +231,7 @@ impl Mesher {
                     None
                 },
                 lambda: fairing_lambda,
+                tangential: fairing_tangential,
             })
         } else if taubin > 0 {
             Smoothing::Taubin(taubin_params)

@@ -18,6 +18,7 @@ doing:
 | --- | --- | --- |
 | `voxel_resolution` | your voxel size, in physical units | vertices come out in those units, so nothing downstream has to rescale |
 | `fairing=20` + `fairing_taubin=True` | use it | cell-domain Taubin: touching objects keep a bit-identical shared wall, and thin processes keep their volume |
+| `fairing_tangential` | optional, `5` | evens out triangles without changing the shape: removes slivers from unsmoothed meshes, a small gain after Taubin, about 11% more `mesh()` time; see [Accuracy](accuracy.md#tangential-sweeps-the-triangles-not-the-surface) |
 | `max_deviation` | leave at `0.5` | caps how far smoothing may move any vertex from the data |
 | `close` | `True` for a whole volume | seals objects that touch the array edge; the border is virtual, so it costs no memory |
 | `threads` | `0` alone, `1` inside a pool | `0` uses every core; `1` stops parallel workers fighting over them |

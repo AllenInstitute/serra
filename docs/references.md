@@ -113,6 +113,18 @@ above. The unconstrained alternative, measured against it in
 > Taubin, G. (1995). *A Signal Processing Approach to Fair Surface Design*.
 > SIGGRAPH '95, 351–358.
 
+The tangential sweeps (`fairing_tangential`) are the relaxation step of
+isotropic remeshing, restricted to the surface. Where materials meet, the
+sheet, curve and corner rules for what each vertex may do follow Faraj et al.'s
+multi-material remesher, applied to serra's cell field rather than to
+tetrahedra:
+
+> Botsch, M., & Kobbelt, L. (2004). *A Remeshing Approach to Multiresolution
+> Modeling*. Symposium on Geometry Processing, 185–192.
+
+> Faraj, N., Thiery, J.-M., & Boubekeur, T. (2016). *Multi-Material Adaptive
+> Volume Remesher*. Computers & Graphics, 58, 150–160.
+
 ## Validation
 
 Surfaces are checked against `zmesh` and against the voxels with a robust

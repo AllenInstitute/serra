@@ -30,7 +30,7 @@
 //! smoothed in one piece.
 
 use crate::extract::{CellField, LabelMesh};
-use crate::tables::{CENTROID, JUNCTION_FACES, SUBVOXEL, SURFACE_FACES};
+use crate::tables::{CENTROID, EDGE_FACES, JUNCTION_FACES, SUBVOXEL, SURFACE_FACES};
 use rayon::prelude::*;
 
 /// Settings for the optional relaxation pass.
@@ -143,7 +143,7 @@ impl Smoothing {
             Smoothing::None => false,
             Smoothing::Laplacian(r) => r.iterations > 0,
             Smoothing::Taubin(t) => t.iterations > 0,
-            Smoothing::Fairing(f) => f.iterations > 0,
+            Smoothing::Fairing(f) => f.iterations > 0 || f.tangential > 0,
         }
     }
 
@@ -185,6 +185,15 @@ pub struct Fairing {
     pub pass_band: Option<f64>,
     /// The positive step of the Taubin pair, in (0, 1).
     pub lambda: f64,
+    /// Tangential sweeps run after the smoothing ones. Zero disables them.
+    ///
+    /// Each moves a cell `step` of the way to its neighbour average, with the
+    /// component along the surface normal removed, so vertices spread out
+    /// evenly over the surface without changing its shape. Junction cells
+    /// slide along their curve and corners stay put, so walls, curves and
+    /// corners between materials keep the same structure. See
+    /// [`fair`] for how the normal is found.
+    pub tangential: u32,
 }
 
 impl Default for Fairing {
@@ -196,6 +205,7 @@ impl Default for Fairing {
             junction_rule: true,
             pass_band: None,
             lambda: 0.63,
+            tangential: 0,
         }
     }
 }
@@ -225,6 +235,36 @@ impl Fairing {
 /// begin exactly one voxel apart. Excluding uniform faces makes the stencil
 /// exactly the union over labels of the quad adjacency serra already builds.
 ///
+/// # Tangential sweeps
+///
+/// After the smoothing sweeps, [`Fairing::tangential`] more sweeps move each
+/// cell towards its neighbour average *within the surface*: the move keeps only
+/// its component in the local tangent plane. Smoothing changes the shape;
+/// these only move vertices across it, evening out triangle sizes. Which motion
+/// a cell is allowed depends on what it is in the multi-material complex, the
+/// same split Faraj et al. (2016) use for multi-material remeshing:
+///
+/// * a **sheet** cell, with no junction face, carries a single wall between two
+///   materials and moves in its tangent plane;
+/// * a **curve** cell, with exactly two junction faces, sits on a curve where
+///   three or more materials meet and moves only along that curve;
+/// * anything else, the junction corners where curves meet or end, holds still.
+///
+/// A sheet cell's normal comes from its crossing edges. Each is dual to a quad
+/// through this cell, and the two face neighbours across the faces holding that
+/// edge are two of the quad's corners, so they give that half-quad's normal
+/// without consulting any label's mesh. Their signs are aligned before summing,
+/// since a cell shared by two labels has no one winding to trust. When the
+/// normals disagree too much — a cell on a sharp corner or edge of the surface,
+/// where no single tangent plane exists — the cell holds still rather than round
+/// it off.
+///
+/// A tangential move is bounded by shortening it, never by clamping each axis
+/// on its own. A vertex already resting against a wall of its cell would
+/// otherwise keep only the part of its move along that wall, which is no longer
+/// in the tangent plane: after a plain Laplacian many vertices rest there, and
+/// clamping per axis turned the sweeps back into smoothing.
+///
 /// Jacobi, and every output depends only on the previous sweep and on a fixed
 /// six-entry stencil summed in face order, so the result is identical for any
 /// chunking or thread count. `parallel` therefore changes only the speed — and
@@ -233,7 +273,7 @@ impl Fairing {
 /// a single thread.
 pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
     let n = cells.positions.len();
-    if params.iterations == 0 || n == 0 {
+    if (params.iterations == 0 && params.tangential == 0) || n == 0 {
         return;
     }
     let [nx, ny, nz] = cells.nc;
@@ -253,6 +293,7 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
     let pinned = &cells.pinned;
     let limit = (params.max_deviation * SUBVOXEL as f64) as f32;
     let steps = params.steps();
+    let step = params.step as f32;
 
     let mut current: Vec<[f32; 3]> = placed
         .iter()
@@ -274,11 +315,15 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
     // junction cell slides along its curve, and seven in eight have exactly two
     // junction faces, a curve entering and leaving. The rest fall back to the
     // full stencil rather than be dragged onto a single neighbour.
-    let stencil: Vec<u8> = (0..n)
-        .map(|i| {
-            let l = linear[i] as usize;
+    //
+    // The tangential sweeps get their own byte, whose top bits say whether the
+    // cell is a sheet, a curve or held (see `SHEET`, `CURVE`, `HELD`).
+    let in_grid: Vec<u8> = linear
+        .iter()
+        .map(|&l| {
+            let l = l as usize;
             let (cx, cy, cz) = (l % nx, (l / nx) % ny, l / plane);
-            let mut in_grid = 0u8;
+            let mut bits = 0u8;
             for (d, inside) in [
                 cx > 0,
                 cx + 1 < nx,
@@ -291,92 +336,314 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
             .enumerate()
             {
                 if inside {
-                    in_grid |= 1 << d;
+                    bits |= 1 << d;
                 }
             }
+            bits
+        })
+        .collect();
+    let stencil: Vec<u8> = (0..n)
+        .map(|i| {
             let mask = crossings[i] as usize;
-            let junction = JUNCTION_FACES[mask] & in_grid;
+            let junction = JUNCTION_FACES[mask] & in_grid[i];
             if params.junction_rule && junction.count_ones() >= 2 {
                 junction
             } else {
-                SURFACE_FACES[mask] & in_grid
+                SURFACE_FACES[mask] & in_grid[i]
             }
         })
         .collect();
+    let tangent_stencil: Vec<u8> = if params.tangential > 0 {
+        (0..n)
+            .map(|i| {
+                let mask = crossings[i] as usize;
+                let junction = JUNCTION_FACES[mask];
+                if junction == 0 {
+                    SHEET | (SURFACE_FACES[mask] & in_grid[i])
+                } else if junction.count_ones() == 2 && junction & in_grid[i] == junction {
+                    CURVE | junction
+                } else {
+                    HELD
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    drop(in_grid);
 
-    // Big enough that the six binary searches at the head of each chunk are
-    // noise, small enough to keep every core fed.
-    const CHUNK: usize = 1 << 16;
+    // The cell and the deviation bound, intersected, applied to a moved
+    // position.
+    let bound = |i: usize, moved: [f32; 3]| -> [f32; 3] {
+        let offsets = &CENTROID[crossings[i] as usize];
+        let mut out = [0.0f32; 3];
+        for a in 0..3 {
+            let base = (placed[i][a] - offsets[a]) as f32;
+            let anchor = placed[i][a] as f32;
+            let lo = base.max(anchor - limit);
+            let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+            out[a] = moved[a].clamp(lo, hi);
+        }
+        out
+    };
 
     for _ in 0..params.iterations {
         for &step in &steps {
-            let sweep = |(block, out): (usize, &mut [[f32; 3]])| {
-                let start = block * CHUNK;
-                // Seek the cursors to this chunk. Targets are monotone in `i`,
-                // so from here each one only ever moves forward.
-                let mut cursor = [0usize; 6];
-                for (d, c) in cursor.iter_mut().enumerate() {
-                    let target = linear[start] as i64 + offset[d];
-                    *c = linear.partition_point(|&x| (x as i64) < target);
-                }
-
-                for (k, slot) in out.iter_mut().enumerate() {
-                    let i = start + k;
-                    let use_mask = stencil[i];
-
-                    let mut sum = [0.0f32; 3];
-                    let mut count = 0u32;
-                    for (d, c) in cursor.iter_mut().enumerate() {
-                        // Advance every cursor, used or not, or the ones that
-                        // are skipped fall behind and desynchronise.
-                        let target = linear[i] as i64 + offset[d];
-                        while *c < n && (linear[*c] as i64) < target {
-                            *c += 1;
+            sweep(linear, &offset, &mut next, parallel, |i, nb| {
+                let use_mask = stencil[i];
+                let mut sum = [0.0f32; 3];
+                let mut count = 0u32;
+                for (d, &c) in nb.iter().enumerate() {
+                    if use_mask & (1 << d) != 0 && c != NONE {
+                        let p = current[c];
+                        for a in 0..3 {
+                            sum[a] += p[a];
                         }
-                        if use_mask & (1 << d) == 0 {
-                            continue;
-                        }
-                        if *c < n && linear[*c] as i64 == target {
-                            let p = current[*c];
-                            for a in 0..3 {
-                                sum[a] += p[a];
-                            }
-                            count += 1;
-                        }
-                    }
-
-                    if pinned[i] || count == 0 {
-                        *slot = current[i];
-                        continue;
-                    }
-
-                    let scale = 1.0 / count as f32;
-                    let offsets = &CENTROID[crossings[i] as usize];
-                    for a in 0..3 {
-                        let average = sum[a] * scale;
-                        let moved = current[i][a] + step * (average - current[i][a]);
-                        // The cell, and the deviation bound, intersected.
-                        let base = (placed[i][a] - offsets[a]) as f32;
-                        let anchor = placed[i][a] as f32;
-                        let lo = base.max(anchor - limit);
-                        let hi = (base + SUBVOXEL as f32).min(anchor + limit);
-                        slot[a] = moved.clamp(lo, hi);
+                        count += 1;
                     }
                 }
-            };
-            if parallel {
-                next.par_chunks_mut(CHUNK).enumerate().for_each(sweep);
-            } else {
-                next.chunks_mut(CHUNK).enumerate().for_each(sweep);
-            }
+                if pinned[i] || count == 0 {
+                    return current[i];
+                }
+                let scale = 1.0 / count as f32;
+                let mut moved = [0.0f32; 3];
+                for a in 0..3 {
+                    let average = sum[a] * scale;
+                    moved[a] = current[i][a] + step * (average - current[i][a]);
+                }
+                bound(i, moved)
+            });
             std::mem::swap(&mut current, &mut next);
         }
+    }
+
+    // Each cell's frame for the tangential sweeps: the unit normal of a sheet,
+    // the unit tangent of a curve, or zero for a cell that holds still.
+    //
+    // Found once, from the shape the smoothing sweeps left, rather than every
+    // sweep. The sweeps only move vertices within the surface, so the shape and
+    // with it the frame hardly change -- and computing it was most of a
+    // sweep's cost.
+    let frame: Vec<[f32; 3]> = if params.tangential > 0 {
+        let mut frame = vec![[0.0f32; 3]; n];
+        sweep(linear, &offset, &mut frame, parallel, |i, nb| {
+            let code = tangent_stencil[i];
+            if pinned[i] || code & HELD != 0 {
+                [0.0; 3]
+            } else if code & CURVE != 0 {
+                // The two junction neighbours span the curve here.
+                let mut ends = [NONE; 2];
+                let mut k = 0;
+                for (f, &c) in nb.iter().enumerate() {
+                    if code & (1 << f) != 0 && k < 2 {
+                        ends[k] = c;
+                        k += 1;
+                    }
+                }
+                if ends.contains(&NONE) {
+                    return [0.0; 3];
+                }
+                let t: [f32; 3] =
+                    std::array::from_fn(|a| current[ends[1]][a] - current[ends[0]][a]);
+                let len = dot(t, t).sqrt();
+                if len > 0.0 {
+                    t.map(|x| x / len)
+                } else {
+                    [0.0; 3]
+                }
+            } else {
+                sheet_normal(crossings[i], current[i], nb, &current).unwrap_or([0.0; 3])
+            }
+        });
+        frame
+    } else {
+        Vec::new()
+    };
+
+    for _ in 0..params.tangential {
+        sweep(linear, &offset, &mut next, parallel, |i, nb| {
+            let here = current[i];
+            let f = frame[i];
+            if f == [0.0; 3] {
+                return here;
+            }
+            let code = tangent_stencil[i];
+            let mut sum = [0.0f32; 3];
+            let mut count = 0u32;
+            for (d, &c) in nb.iter().enumerate() {
+                if code & (1 << d) != 0 && c != NONE {
+                    let p = current[c];
+                    for a in 0..3 {
+                        sum[a] += p[a];
+                    }
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                return here;
+            }
+            let scale = 1.0 / count as f32;
+            let d: [f32; 3] = std::array::from_fn(|a| step * (sum[a] * scale - here[a]));
+            // A curve keeps the part of the move along its tangent; a sheet
+            // loses the part along its normal.
+            let along = dot(d, f);
+            let d: [f32; 3] = if code & CURVE != 0 {
+                f.map(|x| along * x)
+            } else {
+                std::array::from_fn(|a| d[a] - along * f[a])
+            };
+            // The largest fraction of the move that stays inside the cell and
+            // the deviation bound. `here` is always inside, so this is in
+            // [0, 1], and it is nearly always 1: the divisions are only paid
+            // for a move that would actually leave.
+            let offsets = &CENTROID[crossings[i] as usize];
+            let mut lo = [0.0f32; 3];
+            let mut hi = [0.0f32; 3];
+            let mut inside = true;
+            for a in 0..3 {
+                let base = (placed[i][a] - offsets[a]) as f32;
+                let anchor = placed[i][a] as f32;
+                lo[a] = base.max(anchor - limit);
+                hi[a] = (base + SUBVOXEL as f32).min(anchor + limit);
+                let moved = here[a] + d[a];
+                inside &= moved >= lo[a] && moved <= hi[a];
+            }
+            if inside {
+                return std::array::from_fn(|a| here[a] + d[a]);
+            }
+            let mut s = 1.0f32;
+            for a in 0..3 {
+                if d[a] > 0.0 {
+                    s = s.min((hi[a] - here[a]) / d[a]);
+                } else if d[a] < 0.0 {
+                    s = s.min((lo[a] - here[a]) / d[a]);
+                }
+            }
+            let s = s.max(0.0);
+            std::array::from_fn(|a| here[a] + s * d[a])
+        });
+        std::mem::swap(&mut current, &mut next);
     }
 
     for (slot, moved) in cells.positions.iter_mut().zip(current.iter()) {
         for a in 0..3 {
             slot[a] = moved[a].round() as i32;
         }
+    }
+}
+
+/// Marks a face neighbour a cell does not have.
+const NONE: usize = usize::MAX;
+
+/// Tangential stencil codes: the low six bits are the faces averaged over, the
+/// top ones what the cell may do.
+const SHEET: u8 = 0;
+const CURVE: u8 = 1 << 6;
+const HELD: u8 = 1 << 7;
+
+/// How strongly a sheet cell's half-quad normals must agree before their sum is
+/// trusted as its normal: `|sum n| / sum |n|`. A flat sheet scores 1, an edge
+/// between two perpendicular walls 0.71, and the corner of a cube 0.58. Below
+/// this the cell holds still.
+const PLANARITY: f32 = 0.8;
+
+#[inline]
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The unit normal of a sheet cell, or `None` when the surface around it has no
+/// single tangent plane. See [`fair`].
+fn sheet_normal(
+    mask: u16,
+    here: [f32; 3],
+    nb: &[usize; 6],
+    current: &[[f32; 3]],
+) -> Option<[f32; 3]> {
+    let mut sum = [0.0f32; 3];
+    let mut total = 0.0f32;
+    let mut bits = mask;
+    while bits != 0 {
+        let e = bits.trailing_zeros() as usize;
+        bits &= bits - 1;
+        let faces = EDGE_FACES[e];
+        let (c0, c1) = (nb[faces[0] as usize], nb[faces[1] as usize]);
+        if c0 == NONE || c1 == NONE {
+            continue;
+        }
+        let u: [f32; 3] = std::array::from_fn(|a| current[c0][a] - here[a]);
+        let v: [f32; 3] = std::array::from_fn(|a| current[c1][a] - here[a]);
+        let mut m = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        // Which way a half-quad faces depends on which label's side it is
+        // seen from, which a cell shared by several labels cannot say. Only the
+        // line matters for a tangent plane, so each is turned to agree with the
+        // ones before it. Edges are visited in a fixed order, so this is
+        // deterministic.
+        if dot(m, sum) < 0.0 {
+            m = m.map(|x| -x);
+        }
+        for a in 0..3 {
+            sum[a] += m[a];
+        }
+        total += dot(m, m).sqrt();
+    }
+    let len = dot(sum, sum).sqrt();
+    // Also false for NaN, so a degenerate neighbourhood holds still.
+    if len > PLANARITY * total && len > 0.0 {
+        Some(sum.map(|x| x / len))
+    } else {
+        None
+    }
+}
+
+/// One Jacobi sweep over the cell field: `update(i, neighbours)` computes cell
+/// `i`'s new position from the previous sweep, given the index of the cell
+/// across each of its six faces, or [`NONE`].
+fn sweep<F>(linear: &[u32], offset: &[i64; 6], next: &mut [[f32; 3]], parallel: bool, update: F)
+where
+    F: Fn(usize, &[usize; 6]) -> [f32; 3] + Sync,
+{
+    // Big enough that the six binary searches at the head of each chunk are
+    // noise, small enough to keep every core fed.
+    const CHUNK: usize = 1 << 16;
+    let n = linear.len();
+
+    let run = |(block, out): (usize, &mut [[f32; 3]])| {
+        let start = block * CHUNK;
+        // Seek the cursors to this chunk. Targets are monotone in `i`, so from
+        // here each one only ever moves forward.
+        let mut cursor = [0usize; 6];
+        for (d, c) in cursor.iter_mut().enumerate() {
+            let target = linear[start] as i64 + offset[d];
+            *c = linear.partition_point(|&x| (x as i64) < target);
+        }
+        let mut nb = [NONE; 6];
+        for (k, slot) in out.iter_mut().enumerate() {
+            let i = start + k;
+            for (d, c) in cursor.iter_mut().enumerate() {
+                // Advance every cursor, used or not, or the ones that are
+                // skipped fall behind and desynchronise.
+                let target = linear[i] as i64 + offset[d];
+                while *c < n && (linear[*c] as i64) < target {
+                    *c += 1;
+                }
+                nb[d] = if *c < n && linear[*c] as i64 == target {
+                    *c
+                } else {
+                    NONE
+                };
+            }
+            *slot = update(i, &nb);
+        }
+    };
+    if parallel {
+        next.par_chunks_mut(CHUNK).enumerate().for_each(run);
+    } else {
+        next.chunks_mut(CHUNK).enumerate().for_each(run);
     }
 }
 

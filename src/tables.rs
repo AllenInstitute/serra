@@ -231,6 +231,31 @@ const fn build_face_edges() -> [[u8; 4]; 6] {
     out
 }
 
+/// The two faces of the cube each edge lies in, the inverse of [`FACE_EDGES`].
+///
+/// A crossing edge is dual to a quad, and this cell's two face neighbours across
+/// these faces are two of that quad's other corners. That is what lets
+/// tangential fairing estimate a surface normal from the cell field alone,
+/// without the per-label quads.
+pub const EDGE_FACES: [[u8; 2]; NEDGES] = build_edge_faces();
+
+const fn build_edge_faces() -> [[u8; 2]; NEDGES] {
+    let mut out = [[0u8; 2]; NEDGES];
+    let mut found = [0usize; NEDGES];
+    let mut face = 0;
+    while face < 6 {
+        let mut k = 0;
+        while k < 4 {
+            let e = FACE_EDGES[face][k] as usize;
+            out[e][found[e]] = face as u8;
+            found[e] += 1;
+            k += 1;
+        }
+        face += 1;
+    }
+    out
+}
+
 /// How a label's surface passes through a cell.
 ///
 /// A cell contributes one vertex per connected component of the label's
@@ -745,6 +770,17 @@ mod face_kind_tests {
                 0,
                 "mask {mask:#x} has a junction on a face with no surface"
             );
+        }
+    }
+
+    #[test]
+    fn edge_faces_inverts_face_edges() {
+        for (e, faces) in EDGE_FACES.iter().enumerate() {
+            // Two distinct faces, on different axes, each listing this edge.
+            assert_ne!(faces[0] / 2, faces[1] / 2, "edge {e}");
+            for &f in faces {
+                assert!(FACE_EDGES[f as usize].contains(&(e as u8)), "edge {e}");
+            }
         }
     }
 

@@ -122,6 +122,7 @@ uv run pytest tests -q                  # everything else
 | `tests/test_seams.py` | The chunked-meshing contract |
 | `tests/test_determinism.py` | Order, dtype, threads, strides |
 | `tests/test_relaxation.py` | Smoothing quality and its deviation bound |
+| `tests/test_tangential.py` | Tangential sweeps: triangle quality, unchanged shape, walls and junction curves |
 
 Helpers live in `tests/conftest.py`, including a proper non-manifold **vertex**
 check. An edge-only check is not enough: two blocks meeting at a single corner
