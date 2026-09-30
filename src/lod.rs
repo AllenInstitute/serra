@@ -47,16 +47,31 @@
 //! material between them has one hole fewer. Pinches, where one label meets
 //! itself, are never separated, so no object's own connectivity changes.
 //!
-//! The two copies are then remeshed independently, and each is bounded only
-//! against its own label's fine surface, so they can cross each other by up
-//! to `max_error` -- as the walls on either side of any gap thinner than
-//! that already can.
+//! The two copies are then moved a quarter of `max_error` apart, each into its
+//! own label, and are never projected back onto the fine surface, where they
+//! would coincide again. From there they are remeshed like any other walls:
+//! the check below keeps them from crossing, so they can only move apart.
+//!
+//! # No crossings
+//!
+//! Each label's error bound says nothing about the walls on the far side of a
+//! thin gap: across extracellular space thinner than `max_error`, two
+//! objects' coarse surfaces could each stay within the bound and still pass
+//! through each other. So no operation may add a crossing -- a triangle
+//! passing through another that shares no vertex with it. Every split,
+//! collapse, flip and move is checked against the faces near it, found
+//! through a uniform grid, and refused if its triangles would cross more
+//! faces than the ones they replace did. Touching is not crossing, and where
+//! the fine surface already crosses itself, operations there are not all
+//! refused, only kept from making it worse.
 //!
 //! Single-threaded and visited in id order, so the result is a pure function of
 //! the input.
 
+use rustc_hash::FxHashMap;
+
 use crate::extract::CellField;
-use crate::remesh::{EdgeKind, Remesh, VertexKind};
+use crate::remesh::{EdgeKind, Remesh, Separated, VertexKind};
 use crate::walls::{WallMesh, OUTSIDE};
 
 /// What one level asks for.
@@ -149,6 +164,148 @@ fn closest_on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     }
     let t = (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0);
     add(a, scale(ab, t))
+}
+
+/// Whether segment `p`-`q` passes through triangle `t`: its ends strictly on
+/// opposite sides of the plane (by more than `tol`), and the crossing point
+/// strictly inside. Touching -- an end on the plane, coplanar overlap -- is not
+/// passing through.
+fn pierces(p: [f64; 3], q: [f64; 3], t: &[[f64; 3]; 3], tol: f64) -> bool {
+    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+    let l = norm(n);
+    if l == 0.0 {
+        return false;
+    }
+    let (dp, dq) = (dot(n, sub(p, t[0])) / l, dot(n, sub(q, t[0])) / l);
+    if !((dp > tol && dq < -tol) || (dp < -tol && dq > tol)) {
+        return false;
+    }
+    let x = add(p, scale(sub(q, p), dp / (dp - dq)));
+    (0..3).all(|k| dot(cross(sub(t[(k + 1) % 3], t[k]), sub(x, t[k])), n) > 0.0)
+}
+
+/// Whether two triangles cross: some edge of one passes through the other,
+/// which is how any two non-coplanar triangles that intersect do.
+fn crosses(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3], tol: f64) -> bool {
+    // Wholly on one side of the other's plane: cannot cross.
+    let apart = |s: &[[f64; 3]; 3], t: &[[f64; 3]; 3]| {
+        let n = cross(sub(s[1], s[0]), sub(s[2], s[0]));
+        let l = norm(n);
+        if l == 0.0 {
+            return true;
+        }
+        let d = t.map(|p| dot(n, sub(p, s[0])) / l);
+        d.iter().all(|&x| x > -tol) || d.iter().all(|&x| x < tol)
+    };
+    if apart(a, b) || apart(b, a) {
+        return false;
+    }
+    (0..3).any(|k| pierces(a[k], a[(k + 1) % 3], b, tol))
+        || (0..3).any(|k| pierces(b[k], b[(k + 1) % 3], a, tol))
+}
+
+fn bounds(t: &[[f64; 3]; 3]) -> ([f64; 3], [f64; 3]) {
+    let mut lo = t[0];
+    let mut hi = t[0];
+    for p in &t[1..] {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    (lo, hi)
+}
+
+/// `x` in single precision, moved a little further in direction `sign`, so
+/// boxes compared in single precision never shrink by the conversion.
+fn widen(sign: f64) -> impl Fn(f64) -> f32 {
+    move |x| (x + sign * (1e-6 * x.abs() + 1e-9)) as f32
+}
+
+/// Coarse faces by where they are: a uniform grid of cells, each listing the
+/// faces whose bounding box touches it. Entries go stale as faces change; a
+/// query checks every candidate against the face as it is now, and the grid
+/// is rebuilt at the start of each pass.
+#[derive(Default)]
+struct Grid {
+    cell: f64,
+    /// Per cell, each face with its bounding box when it was inserted, so a
+    /// query can pass over most entries without looking at the mesh.
+    cells: FxHashMap<[i64; 3], Vec<(u32, [f32; 6])>>,
+    /// Entries in all cells, stale ones included.
+    entries: usize,
+    /// Faces inserted spanning more than a few cells along some axis.
+    oversized: usize,
+    /// Per face, the cells it is listed in, so moving it drops the old entries.
+    span: Vec<Option<([i64; 3], [i64; 3])>>,
+}
+
+impl Grid {
+    fn key(&self, p: [f64; 3]) -> [i64; 3] {
+        p.map(|x| (x / self.cell).floor() as i64)
+    }
+
+    fn insert(&mut self, f: u32, t: &[[f64; 3]; 3]) {
+        let (lo, hi) = bounds(t);
+        let (a, b) = (self.key(lo), self.key(hi));
+        let (down, up) = (widen(-1.0), widen(1.0));
+        let bbox = [
+            down(lo[0]),
+            down(lo[1]),
+            down(lo[2]),
+            up(hi[0]),
+            up(hi[1]),
+            up(hi[2]),
+        ];
+        if (0..3).any(|k| b[k] - a[k] > 2) {
+            self.oversized += 1;
+        }
+        if self.span.len() <= f as usize {
+            self.span.resize(f as usize + 1, None);
+        }
+        if let Some((oa, ob)) = self.span[f as usize].take() {
+            for i in oa[0]..=ob[0] {
+                for j in oa[1]..=ob[1] {
+                    for k in oa[2]..=ob[2] {
+                        if let Some(list) = self.cells.get_mut(&[i, j, k]) {
+                            let before = list.len();
+                            list.retain(|&(g, _)| g != f);
+                            self.entries -= before - list.len();
+                        }
+                    }
+                }
+            }
+        }
+        self.span[f as usize] = Some((a, b));
+        for i in a[0]..=b[0] {
+            for j in a[1]..=b[1] {
+                for k in a[2]..=b[2] {
+                    self.cells.entry([i, j, k]).or_default().push((f, bbox));
+                    self.entries += 1;
+                }
+            }
+        }
+    }
+
+    /// Faces whose box when inserted touched the box `lo`-`hi`, possibly
+    /// repeated. A face that has moved since may be missing from its old
+    /// place's list, but is always listed where it is now.
+    fn near(&self, lo: [f64; 3], hi: [f64; 3], out: &mut Vec<u32>) {
+        let (a, b) = (self.key(lo), self.key(hi));
+        let (l, h) = (lo.map(widen(-1.0)), hi.map(widen(1.0)));
+        for i in a[0]..=b[0] {
+            for j in a[1]..=b[1] {
+                for k in a[2]..=b[2] {
+                    if let Some(list) = self.cells.get(&[i, j, k]) {
+                        out.extend(list.iter().filter_map(|&(f, bb)| {
+                            let apart = (0..3).any(|k| bb[k + 3] < l[k] || bb[k] > h[k]);
+                            (!apart).then_some(f)
+                        }));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Shape quality of a triangle: 1 equilateral, 0 degenerate.
@@ -364,6 +521,8 @@ pub struct Counts {
     pub moves: usize,
     /// Operations refused because they would have broken `max_error`.
     pub refused_for_error: usize,
+    /// Operations refused because a triangle would have crossed another.
+    pub refused_for_crossing: usize,
     /// Small contacts [`level`] separated before remeshing.
     pub separated: usize,
 }
@@ -375,6 +534,14 @@ struct State<'a> {
     track: Tracking,
     /// Target length at each coarse vertex, refreshed each round.
     size: Vec<f64>,
+    grid: Grid,
+    /// Per face, the last query that saw it, to skip repeats without sorting.
+    seen: std::cell::RefCell<(u32, Vec<u32>)>,
+    /// Vertices of separated copies, and whatever collapses them in: never
+    /// projected back onto the fine surface, where the copies coincide.
+    parted: Vec<bool>,
+    /// How far past a plane a point must be to count as through it.
+    tol: f64,
     counts: Counts,
 }
 
@@ -389,13 +556,13 @@ pub fn level(
 ) -> (Remesh, Counts) {
     let mut rm = Remesh::new(walls, cells, resolution);
     let separated = if params.drop_small_contacts {
-        rm.separate_small_contacts(2.0 * params.max_error).len()
+        rm.separate_small_contacts(2.0 * params.max_error)
     } else {
-        0
+        Vec::new()
     };
     let reference = Reference::new(&rm);
-    let mut counts = remesh(&mut rm, &reference, params);
-    counts.separated = separated;
+    let mut counts = run(&mut rm, &reference, params, &separated);
+    counts.separated = separated.len();
     (rm, counts)
 }
 
@@ -405,6 +572,15 @@ pub fn level(
 /// contacts are left alone here whatever the parameters say: separating them
 /// changes what the reference is, so [`level`] does it before making one.
 pub fn remesh(rm: &mut Remesh, reference: &Reference, params: &LevelParams) -> Counts {
+    run(rm, reference, params, &[])
+}
+
+fn run(
+    rm: &mut Remesh,
+    reference: &Reference,
+    params: &LevelParams,
+    separated: &[Separated],
+) -> Counts {
     let mut on_face: Vec<Vec<u32>> = vec![Vec::new(); rm.face_count()];
     let mut face = vec![u32::MAX; reference.samples.len()];
     for (i, &(v, l)) in reference.samples.iter().enumerate() {
@@ -425,12 +601,21 @@ pub fn remesh(rm: &mut Remesh, reference: &Reference, params: &LevelParams) -> C
         params: *params,
         track: Tracking { face, on_face },
         size: Vec::new(),
+        grid: Grid::default(),
+        seen: Default::default(),
+        parted: Vec::new(),
+        tol: 1e-6 * params.max_length,
         counts: Counts::default(),
     };
+    state.rebuild_grid();
+    state.part(separated);
     for _ in 0..params.iterations {
         state.refresh_sizes();
         state.split_pass();
         state.refresh_sizes();
+        // Edges are longest after the splits and grow with the collapses:
+        // cells sized to them here keep queries small for the rest.
+        state.rebuild_grid();
         state.collapse_pass();
         state.flip_pass(false);
         state.relax_pass();
@@ -451,6 +636,162 @@ impl State<'_> {
             Some((_, to, at)) if w == to => at,
             _ => self.pos(w),
         })
+    }
+
+    /// Index every live face, in cells twice the mean edge length.
+    fn rebuild_grid(&mut self) {
+        let (mut sum, mut n) = (0.0, 0usize);
+        for f in 0..self.rm.face_count() as u32 {
+            if let Some(t) = self.rm.face(f) {
+                sum += norm(sub(self.pos(t[0]), self.pos(t[1])));
+                n += 1;
+            }
+        }
+        let cell = if n > 0 {
+            (2.0 * sum / n as f64).max(self.params.min_length)
+        } else {
+            self.params.max_length
+        };
+        self.grid = Grid {
+            cell,
+            ..Default::default()
+        };
+        for f in 0..self.rm.face_count() as u32 {
+            if self.rm.face(f).is_some() {
+                let t = self.triangle_with(f, None);
+                self.grid.insert(f, &t);
+            }
+        }
+    }
+
+    fn is_parted(&self, v: u32) -> bool {
+        self.parted.get(v as usize).copied().unwrap_or(false)
+    }
+
+    fn mark_parted(&mut self, v: u32) {
+        if self.parted.len() <= v as usize {
+            self.parted.resize(v as usize + 1, false);
+        }
+        self.parted[v as usize] = true;
+    }
+
+    /// Put the faces around `v` in the grid where they are now, rebuilding it
+    /// once stale entries outnumber live ones a few times over, or once the
+    /// faces have grown well past its cells, as they do while collapsing.
+    fn reindex(&mut self, v: u32) {
+        for f in self.rm.faces_around(v).to_vec() {
+            let t = self.triangle_with(f, None);
+            self.grid.insert(f, &t);
+        }
+        let n = self.rm.face_count();
+        if self.grid.entries > 3 * n || self.grid.oversized > n / 64 {
+            self.rebuild_grid();
+        }
+    }
+
+    /// How many (triangle, live face) pairs cross, over triangles `tris` (each
+    /// with its vertex ids) and every live face other than `skip` sharing no
+    /// vertex with it.
+    fn crossings(&self, tris: &[([u32; 3], [[f64; 3]; 3])], skip: &[u32]) -> usize {
+        if tris.is_empty() {
+            return 0;
+        }
+        // One query for the lot: an operation's triangles overlap, and asking
+        // for each separately scans the same cells over and over.
+        let boxes: Vec<([f64; 3], [f64; 3])> = tris.iter().map(|(_, t)| bounds(t)).collect();
+        let (mut lo, mut hi) = boxes[0];
+        for (l, h) in &boxes[1..] {
+            for k in 0..3 {
+                lo[k] = lo[k].min(l[k]);
+                hi[k] = hi[k].max(h[k]);
+            }
+        }
+        let mut near = Vec::new();
+        self.grid.near(lo, hi, &mut near);
+        let mut seen = self.seen.borrow_mut();
+        let (stamp, marks) = &mut *seen;
+        if marks.len() < self.rm.face_count() {
+            marks.resize(self.rm.face_count(), 0);
+        }
+        *stamp = stamp.wrapping_add(1);
+        if *stamp == 0 {
+            marks.iter_mut().for_each(|m| *m = 0);
+            *stamp = 1;
+        }
+        let mut n = 0;
+        for &g in &near {
+            if marks[g as usize] == *stamp || skip.contains(&g) {
+                continue;
+            }
+            marks[g as usize] = *stamp;
+            let Some(gt) = self.rm.face(g) else {
+                continue;
+            };
+            let other = gt.map(|w| self.pos(w));
+            let (olo, ohi) = bounds(&other);
+            if (0..3).any(|k| ohi[k] < lo[k] || olo[k] > hi[k]) {
+                continue;
+            }
+            for ((ids, t), (l, h)) in tris.iter().zip(&boxes) {
+                if (0..3).any(|k| ohi[k] < l[k] || olo[k] > h[k])
+                    || gt.iter().any(|w| ids.contains(w))
+                {
+                    continue;
+                }
+                if crosses(t, &other, self.tol) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// Whether replacing faces `region` with `after` would make more crossings
+    /// than there are: no operation may add one, but where the fine surface
+    /// already had some, operations there are not all refused.
+    fn adds_crossing(&self, region: &[u32], after: &[([u32; 3], [[f64; 3]; 3])]) -> bool {
+        let new = self.crossings(after, region);
+        if new == 0 {
+            return false;
+        }
+        let before: Vec<([u32; 3], [[f64; 3]; 3])> = region
+            .iter()
+            .map(|&f| (self.rm.face(f).unwrap(), self.triangle_with(f, None)))
+            .collect();
+        new > self.crossings(&before, region)
+    }
+
+    /// Move each separated patch's two copies a quarter of `max_error` apart,
+    /// each into its own label, so the copies no longer coincide and any later
+    /// operation that would push one through the other shows as a crossing.
+    fn part(&mut self, separated: &[Separated]) {
+        let gap = 0.25 * self.params.max_error;
+        self.parted = vec![false; self.rm.vertex_count()];
+        for s in separated {
+            for &(va, vx) in &s.twins {
+                self.parted[va as usize] = true;
+                self.parted[vx as usize] = true;
+            }
+        }
+        for s in separated {
+            let (a, x) = s.labels;
+            for &(va, vx) in &s.twins {
+                for (v, label) in [(va, a), (vx, x)] {
+                    // Outward for `label`, over its faces here.
+                    let mut n = [0.0; 3];
+                    for &f in self.rm.faces_around(v) {
+                        let t = self.triangle_with(f, None);
+                        let fnorm = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                        let front = self.rm.labels(f).0 == label;
+                        n = add(n, if front { fnorm } else { scale(fnorm, -1.0) });
+                    }
+                    let l = norm(n);
+                    if l > 0.0 && self.try_move(v, sub(self.pos(v), scale(n, gap / l))) {
+                        self.counts.moves += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Target length at each coarse vertex: the mean over the fine vertices on
@@ -636,12 +977,17 @@ impl State<'_> {
                     .resize(self.rm.vertex_count(), self.params.max_length);
             }
             self.size[m as usize] = self.target(u, v);
+            self.reindex(m);
             // The surface has not changed shape: redistribute each split face's
             // fine vertices between its two halves.
             let mut region = before.clone();
             region.extend(first_new..self.rm.face_count() as u32);
             if let Some(a) = self.fit(&region, &region, None, None) {
                 self.commit(&region, a);
+            }
+            if self.is_parted(u) || self.is_parted(v) {
+                self.mark_parted(m);
+                continue;
             }
             // Pull the new vertex onto the fine surface or curve.
             let mid = self.pos(m);
@@ -695,9 +1041,12 @@ impl State<'_> {
             region.sort_unstable();
             region.dedup();
             // (A corner merging into another stays where the other is.)
+            let parted = self.is_parted(u) || self.is_parted(v);
             let at = if ku == kv && ku != VertexKind::Corner {
                 let mid = scale(add(self.pos(u), self.pos(v)), 0.5);
-                if ku == VertexKind::Wall {
+                if parted {
+                    mid
+                } else if ku == VertexKind::Wall {
                     self.project(mid, &region, Some(self.wall_of(u)))
                 } else {
                     self.project(mid, &region, None)
@@ -737,9 +1086,25 @@ impl State<'_> {
                 self.counts.refused_for_error += 1;
                 continue;
             };
+            let replaced: Vec<([u32; 3], [[f64; 3]; 3])> = survivors
+                .iter()
+                .zip(&after)
+                .map(|(&f, t)| {
+                    let ids = self.rm.face(f).unwrap().map(|w| if w == u { v } else { w });
+                    (ids, *t)
+                })
+                .collect();
+            if self.adds_crossing(&region, &replaced) {
+                self.counts.refused_for_crossing += 1;
+                continue;
+            }
             if self.rm.collapse(u, v, self.rm.to_voxel(at)) {
                 self.counts.collapses += 1;
                 self.commit(&region, assignment);
+                self.reindex(v);
+                if parted {
+                    self.mark_parted(v);
+                }
             }
         }
     }
@@ -813,8 +1178,16 @@ impl State<'_> {
                 self.counts.refused_for_error += 1;
                 continue;
             }
+            if self.adds_crossing(&[fa, fb], &[([p, u, q], tris[0]), ([q, v, p], tris[1])]) {
+                self.counts.refused_for_crossing += 1;
+                continue;
+            }
             if self.rm.flip(u, v) {
                 self.counts.flips += 1;
+                for f in [fa, fb] {
+                    let t = self.triangle_with(f, None);
+                    self.grid.insert(f, &t);
+                }
                 let assignment = self
                     .fit(&[fa, fb], &[fa, fb], None, None)
                     .expect("a flip keeps the pair's ground");
@@ -860,8 +1233,12 @@ impl State<'_> {
                     let d = sub(c, p);
                     let tangent = sub(d, scale(n, dot(d, n)));
                     let moved = add(p, scale(tangent, 0.5));
-                    let region = self.rm.faces_around(v).to_vec();
-                    self.project(moved, &region, Some(self.wall_of(v)))
+                    if self.is_parted(v) {
+                        moved
+                    } else {
+                        let region = self.rm.faces_around(v).to_vec();
+                        self.project(moved, &region, Some(self.wall_of(v)))
+                    }
                 }
                 VertexKind::Curve => {
                     let ends = self.rm.curve_neighbours(v);
@@ -898,8 +1275,18 @@ impl State<'_> {
             self.counts.refused_for_error += 1;
             return false;
         };
+        let moved: Vec<([u32; 3], [[f64; 3]; 3])> = region
+            .iter()
+            .zip(&after)
+            .map(|(&f, t)| (self.rm.face(f).unwrap(), *t))
+            .collect();
+        if self.adds_crossing(&region, &moved) {
+            self.counts.refused_for_crossing += 1;
+            return false;
+        }
         if self.rm.relocate(v, self.rm.to_voxel(to)) {
             self.commit(&region, assignment);
+            self.reindex(v);
             true
         } else {
             false
@@ -1224,7 +1611,13 @@ mod tests {
             let done = rm.separate_small_contacts(2.0 * params.max_error);
             separated += done.len();
             let reference = Reference::new(&rm);
-            remesh(&mut rm, &reference, &params);
+            let before = crossing_pairs(&fine);
+            super::run(&mut rm, &reference, &params, &done);
+            let after = crossing_pairs(&rm);
+            assert!(
+                after <= before,
+                "seed {seed}: {before} -> {after} crossings"
+            );
             let o = opts(&a);
             for s in 0..e.meshes.len() as u32 {
                 let (before, after) = (fine.label_mesh(s, &o), rm.label_mesh(s, &o));
@@ -1245,6 +1638,66 @@ mod tests {
             }
         }
         assert!(separated > 0, "nothing was separated");
+    }
+
+    /// Pairs of live faces sharing no vertex that cross, through the grid.
+    fn crossing_pairs(rm: &Remesh) -> usize {
+        let pos = |f: u32| rm.face(f).unwrap().map(|v| rm.physical_position(v));
+        let mut grid = Grid {
+            cell: 2.0,
+            ..Default::default()
+        };
+        let live: Vec<u32> = (0..rm.face_count() as u32)
+            .filter(|&f| rm.face(f).is_some())
+            .collect();
+        for &f in &live {
+            grid.insert(f, &pos(f));
+        }
+        let mut n = 0;
+        let mut near = Vec::new();
+        for &f in &live {
+            let (t, ids) = (pos(f), rm.face(f).unwrap());
+            let (lo, hi) = bounds(&t);
+            near.clear();
+            grid.near(lo, hi, &mut near);
+            near.sort_unstable();
+            near.dedup();
+            for &g in &near {
+                if g <= f || rm.face(g).unwrap().iter().any(|w| ids.contains(w)) {
+                    continue;
+                }
+                if crosses(&t, &pos(g), 1e-6) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// No level adds a crossing: a coarse triangle passing through another
+    /// wall, which each label's error bound alone would allow across any gap
+    /// thinner than `max_error`.
+    #[test]
+    fn remeshing_adds_no_crossings() {
+        let params = LevelParams {
+            max_length: 4.0,
+            min_length: 0.5,
+            max_error: 0.6,
+            iterations: 4,
+            drop_small_contacts: false,
+        };
+        let mut refused = 0;
+        for seed in 0..4 {
+            let a = noisy(22, 8, seed);
+            let (_, fine, rm, counts) = run(&a, true, &params);
+            refused += counts.refused_for_crossing;
+            let (before, after) = (crossing_pairs(&fine), crossing_pairs(&rm));
+            assert!(
+                after <= before,
+                "seed {seed}: {before} -> {after} crossings"
+            );
+        }
+        assert!(refused > 0, "the check never had anything to refuse");
     }
 
     #[test]

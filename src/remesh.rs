@@ -86,12 +86,15 @@ pub enum VertexKind {
 }
 
 /// One patch [`Remesh::separate_small_contacts`] separated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Separated {
     /// The two labels that touched there (front, then back or [`OUTSIDE`]).
     pub labels: (u32, u32),
     /// The material now between them (a label slot or [`OUTSIDE`]).
     pub between: u32,
+    /// Each patch vertex, still the first label's, with the copy made for the
+    /// second: at the same place until something moves them.
+    pub twins: Vec<(u32, u32)>,
 }
 
 /// Which side of a face a label is on: 0 the front, 1 the back.
@@ -465,10 +468,14 @@ impl Remesh {
             let patch = self.patch(seed, &mut seen);
             if let Some(between) = self.separable(&patch, max_extent) {
                 let labels = self.labels(patch[0]);
-                self.separate(&patch, between);
+                let twins = self.separate(&patch, between);
                 // The new faces are this patch's other side: done.
                 seen.resize(self.faces.len(), true);
-                out.push(Separated { labels, between });
+                out.push(Separated {
+                    labels,
+                    between,
+                    twins,
+                });
             }
         }
         out
@@ -607,7 +614,7 @@ impl Remesh {
 
     /// Give `patch`'s back label its own copy of the patch, with `y` between
     /// the two; see [`Remesh::separate_small_contacts`].
-    fn separate(&mut self, patch: &[u32], y: u32) {
+    fn separate(&mut self, patch: &[u32], y: u32) -> Vec<(u32, u32)> {
         let (a, x) = self.labels(patch[0]);
         let in_patch: FxHashSet<u32> = patch.iter().copied().collect();
         let mut verts: Vec<u32> = patch.iter().flat_map(|&f| self.faces[f as usize]).collect();
@@ -668,6 +675,7 @@ impl Remesh {
                 self.incident[w as usize].push(g);
             }
         }
+        verts.into_iter().map(|v| (v, twin[&v])).collect()
     }
 
     /// Number of vertex ids, live or not.
