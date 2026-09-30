@@ -69,7 +69,7 @@ fn dist2(a: &[i32; 3], b: &[i32; 3]) -> i64 {
 /// point pairs, so both copies of the wall pick the same one geometrically and
 /// the two surfaces stay exactly coincident.
 #[inline]
-fn split_along_first_diagonal(p: [&[i32; 3]; 4]) -> bool {
+pub(crate) fn split_along_first_diagonal(p: [&[i32; 3]; 4]) -> bool {
     let da = dist2(p[0], p[2]);
     let db = dist2(p[1], p[3]);
     if da != db {
@@ -157,10 +157,47 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
         flip_edges(&mut faces, &verts, opts.flips);
     }
 
+    let is_suspect: Vec<bool> = if raw.suspects.is_empty() {
+        Vec::new()
+    } else {
+        let mut flags = vec![false; raw.positions.len()];
+        for &v in &raw.suspects {
+            flags[v as usize] = true;
+        }
+        flags
+    };
+    let pinned = |v: u32| raw.pinned[v as usize];
+    finish(
+        &raw.positions,
+        &faces,
+        |v| raw.cells[v as usize],
+        |v| !is_suspect.is_empty() && is_suspect[v as usize],
+        (!raw.pinned.is_empty()).then_some(&pinned as &dyn Fn(u32) -> bool),
+        opts,
+    )
+}
+
+/// Turn triangles over fixed-point vertices into the caller's mesh: drop
+/// unreferenced vertices, convert to physical coordinates, fix the winding for
+/// a mirroring axis order, repair non-manifold vertices, and add normals and
+/// pinning.
+///
+/// Shared by [`build_with`] and [`crate::walls`], so a label's surface comes out
+/// bit-identical whichever of the two it was built from.
+///
+/// `cell_of`, `suspect` and `pinned` are asked of the input's vertex ids.
+pub(crate) fn finish(
+    positions: &[[i32; 3]],
+    faces: &[[u32; 3]],
+    cell_of: impl Fn(u32) -> u32,
+    suspect: impl Fn(u32) -> bool,
+    pinned: Option<&dyn Fn(u32) -> bool>,
+    opts: &MeshOptions,
+) -> TriangleMesh {
     // --- drop unreferenced vertices, preserving order ------------------------
-    let mut remap = vec![u32::MAX; raw.positions.len()];
+    let mut remap = vec![u32::MAX; positions.len()];
     let mut kept: Vec<u32> = Vec::new();
-    for f in &faces {
+    for f in faces {
         for &v in f {
             if remap[v as usize] == u32::MAX {
                 remap[v as usize] = kept.len() as u32;
@@ -174,7 +211,7 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
     let vertices: Vec<[f32; 3]> = kept
         .iter()
         .map(|&v| {
-            let p = &raw.positions[v as usize];
+            let p = &positions[v as usize];
             let voxel = [
                 p[0] as f64 / scale,
                 p[1] as f64 / scale,
@@ -188,7 +225,7 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
     // A handedness-reversing axis mapping would leave every normal pointing
     // inward, so the winding is reversed to compensate.
     let flip = opts.layout.inverts_orientation();
-    let faces: Vec<[u32; 3]> = faces
+    let mut faces: Vec<[u32; 3]> = faces
         .iter()
         .map(|f| {
             let (a, b, c) = (
@@ -205,16 +242,15 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
         .collect();
 
     // Repair the configurations the per-sheet split cannot reach.
-    let mut faces = faces;
-    let suspects: Vec<u32> = raw
-        .suspects
+    let suspects: Vec<u32> = kept
         .iter()
-        .filter_map(|&v| {
-            let slot = remap[v as usize];
-            (slot != u32::MAX).then_some(slot)
-        })
+        .enumerate()
+        .filter(|&(_, &v)| suspect(v))
+        .map(|(slot, _)| slot as u32)
         .collect();
-    let origin = split_non_manifold_vertices(&mut faces, vertices.len(), &suspects);
+    let origin = split_non_manifold_vertices(&mut faces, vertices.len(), &suspects, |slot| {
+        cell_of(kept[slot as usize])
+    });
     let vertices: Vec<[f32; 3]> = origin.iter().map(|&v| vertices[v as usize]).collect();
 
     let normals = if opts.normals {
@@ -223,13 +259,9 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
         None
     };
 
-    let pinned = if raw.pinned.is_empty() {
-        Vec::new()
-    } else {
-        origin
-            .iter()
-            .map(|&v| raw.pinned[kept[v as usize] as usize])
-            .collect()
+    let pinned = match pinned {
+        None => Vec::new(),
+        Some(pinned) => origin.iter().map(|&v| pinned(kept[v as usize])).collect(),
     };
 
     TriangleMesh {
@@ -266,6 +298,7 @@ fn split_non_manifold_vertices(
     faces: &mut [[u32; 3]],
     vertex_count: usize,
     suspects: &[u32],
+    cell_of: impl Fn(u32) -> u32,
 ) -> Vec<u32> {
     use rustc_hash::FxHashMap;
 
@@ -291,7 +324,14 @@ fn split_non_manifold_vertices(
 
     let mut origin: Vec<u32> = (0..vertex_count as u32).collect();
     let mut ordered: Vec<u32> = fan_of.keys().copied().collect();
-    ordered.sort_unstable(); // keep the numbering deterministic
+    // Processed in order of cell, not of vertex id. Splitting one vertex
+    // changes the edges its neighbours see, so where two suspects share an
+    // edge the result depends on which goes first -- and vertex ids are only
+    // the order a particular face list happened to use them in, which differs
+    // between a label's own mesh and the same surface taken from
+    // [`crate::walls`]. Cells are the same either way. Two suspects that share
+    // an edge are always in different cells, so ties never matter.
+    ordered.sort_unstable_by_key(|&v| (cell_of(v), v));
 
     let mut uses: FxHashMap<u32, (u32, u32)> = FxHashMap::default();
     for v in ordered {

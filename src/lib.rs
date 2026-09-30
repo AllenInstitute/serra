@@ -14,6 +14,7 @@ pub mod python;
 pub mod simplify;
 pub mod smooth;
 pub mod tables;
+pub mod walls;
 
 use pyo3::prelude::*;
 

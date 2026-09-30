@@ -25,6 +25,7 @@ nav:
       - Accuracy and smoothing: accuracy.md
       - PyChunkedGraph: pychunkedgraph.md
   - Developer guide: developer.md
+  - Remeshing and LODs (in progress): remeshing.md
   - API reference: reference.md
   - Other implementations: reference-implementation.md
   - Related work: related-work.md

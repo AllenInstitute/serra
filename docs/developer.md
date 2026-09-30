@@ -39,6 +39,7 @@ The crate is a pipeline, one module per stage. Data flows top to bottom.
 | `src/extract.rs` | The single pass, and its parallel banding |
 | `src/mesh.rs` | Physical coordinates, triangulation, normals |
 | `src/flip.rs` | Optional edge flips after triangulation, identical on both copies of a shared wall |
+| `src/walls.rs` | Every wall between labels stored once, for remeshing and levels of detail; see [Remeshing](remeshing.md) |
 | `src/python.rs` | PyO3 bindings — the only module that knows about Python |
 | `python/serra_mesh/` | `Mesher` front end, `Mesh` container, file formats |
 
