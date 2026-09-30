@@ -4,9 +4,9 @@
 //! ones, quads become triangles, and axis order is applied.
 
 use crate::extract::{CellField, LabelMesh};
-use crate::flip::{flip_edges, Vertices};
+use crate::flip::{flip_edges, VertexInfo};
 use crate::orient::Layout;
-use crate::tables::{FACE_EDGES, SHEET_CELL, SUBVOXEL};
+use crate::tables::{AMBIGUOUS_CELL, SHEET_CELL, SUBVOXEL};
 
 /// A triangle mesh in physical coordinates.
 #[derive(Default, Clone)]
@@ -88,12 +88,38 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
     build_with(raw, None, opts)
 }
 
-/// Whether any face of a cell has all four edges crossing: two labels on
-/// opposite diagonals, the configuration the manifold repair below exists for.
-fn has_ambiguous_face(crossings: u16) -> bool {
-    FACE_EDGES
-        .iter()
-        .any(|face| face.iter().all(|&e| crossings & (1 << e) != 0))
+/// What edge flipping asks about a label's raw vertices, answered from the cell
+/// each came from. All four answers are properties of the cell, not the label,
+/// which is what lets two labels sharing a wall flip it identically.
+struct CellVertices<'a> {
+    raw: &'a LabelMesh,
+    cells: &'a CellField,
+    /// Physical size of one fixed-point unit along each array axis.
+    scale: [f64; 3],
+}
+
+impl VertexInfo for CellVertices<'_> {
+    fn count(&self) -> usize {
+        self.raw.positions.len()
+    }
+    #[inline]
+    fn position(&self, v: u32) -> [f64; 3] {
+        let p = self.raw.positions[v as usize];
+        std::array::from_fn(|k| p[k] as f64 * self.scale[k])
+    }
+    #[inline]
+    fn key(&self, v: u32) -> u32 {
+        self.raw.cells[v as usize]
+    }
+    #[inline]
+    fn sheet(&self, v: u32) -> bool {
+        SHEET_CELL[self.cells.crossings[self.key(v) as usize] as usize]
+    }
+    #[inline]
+    fn frozen(&self, v: u32) -> bool {
+        let c = self.key(v) as usize;
+        self.cells.pinned[c] || AMBIGUOUS_CELL[self.cells.crossings[c] as usize]
+    }
 }
 
 /// [`build`], with the cell field the surface came from, which edge flipping
@@ -123,24 +149,10 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
 
     // --- flip edges, on the raw vertices so every label sees the same ids ---
     if let (Some(cells), true) = (cells, opts.flips > 0) {
-        let scale = SUBVOXEL as f64;
-        let position: Vec<[f64; 3]> = raw
-            .positions
-            .iter()
-            .map(|p| std::array::from_fn(|k| p[k] as f64 / scale * opts.resolution[k]))
-            .collect();
-        let crossings = |v: usize| cells.crossings[raw.cells[v] as usize];
-        let sheet: Vec<bool> = (0..raw.positions.len())
-            .map(|v| SHEET_CELL[crossings(v) as usize])
-            .collect();
-        let frozen: Vec<bool> = (0..raw.positions.len())
-            .map(|v| cells.pinned[raw.cells[v] as usize] || has_ambiguous_face(crossings(v)))
-            .collect();
-        let verts = Vertices {
-            position: &position,
-            key: &raw.cells,
-            sheet: &sheet,
-            frozen: &frozen,
+        let verts = CellVertices {
+            raw,
+            cells,
+            scale: std::array::from_fn(|k| opts.resolution[k] / SUBVOXEL as f64),
         };
         flip_edges(&mut faces, &verts, opts.flips);
     }

@@ -347,6 +347,35 @@ pub static JUNCTION_FACES: [u8; 1 << NEDGES] = build_face_mask(3);
 /// wall must agree on which of its vertices are interior to it.
 pub static SHEET_CELL: [bool; 1 << NEDGES] = build_sheet_cell();
 
+/// Cells with a face whose four edges all cross, indexed by the 12-bit crossing
+/// mask: two labels on opposite diagonals of the face. The only cells whose
+/// vertices the manifold repair in [`crate::mesh`] can split.
+pub static AMBIGUOUS_CELL: [bool; 1 << NEDGES] = build_ambiguous_cell();
+
+const fn build_ambiguous_cell() -> [bool; 1 << NEDGES] {
+    let mut out = [false; 1 << NEDGES];
+    let mut mask = 0usize;
+    while mask < (1 << NEDGES) {
+        let mut face = 0;
+        while face < 6 {
+            let mut all = true;
+            let mut k = 0;
+            while k < 4 {
+                if mask & (1 << FACE_EDGES[face][k]) == 0 {
+                    all = false;
+                }
+                k += 1;
+            }
+            if all {
+                out[mask] = true;
+            }
+            face += 1;
+        }
+        mask += 1;
+    }
+    out
+}
+
 const fn build_sheet_cell() -> [bool; 1 << NEDGES] {
     let mut out = [false; 1 << NEDGES];
     let mut mask = 0usize;
@@ -841,6 +870,24 @@ mod face_kind_tests {
             }
         });
         assert!(sheets > 0);
+    }
+
+    /// The cell-level ambiguity flag covers every cell where some label has an
+    /// ambiguous face, which is what the per-label repair keys on. It is
+    /// stricter than that: a face with four different labels has all four
+    /// edges crossing but no label on a diagonal. Freezing those too is safe.
+    #[test]
+    fn ambiguous_cell_matches_the_per_label_table() {
+        each_partition(|corners| {
+            let mask = crossings_of(corners);
+            let any_label = (0..NCORNERS as u32).any(|l| {
+                let bits = (0..NCORNERS)
+                    .filter(|&c| corners[c] == l)
+                    .fold(0usize, |m, c| m | 1 << c);
+                bits != 0 && AMBIGUOUS[bits]
+            });
+            assert!(AMBIGUOUS_CELL[mask] || !any_label, "corners {corners:?}");
+        });
     }
 
     /// No junction face is not enough on its own: two isolated corners of
