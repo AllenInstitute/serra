@@ -33,11 +33,31 @@
 //! onto the fine curve. Corners, fixed and locked vertices do not move at all
 //! (see [`crate::remesh`]).
 //!
+//! # Small contacts
+//!
+//! Left exact, a coarse level keeps every contact between labels however
+//! small, and the junction curves round a patch a voxel or two across hold
+//! the triangles there to that size. With
+//! [`LevelParams::drop_small_contacts`], [`level`] first separates each wall
+//! patch no more than `2 * max_error` across that a single other material
+//! surrounds ([`Remesh::separate_small_contacts`]): the two labels each keep
+//! their own copy of the patch, at the same place, with that material between
+//! them. Every label's surface keeps its shape, so the error bound is
+//! unchanged; what changes is that the two no longer touch there, and the
+//! material between them has one hole fewer. Pinches, where one label meets
+//! itself, are never separated, so no object's own connectivity changes.
+//!
+//! The two copies are then remeshed independently, and each is bounded only
+//! against its own label's fine surface, so they can cross each other by up
+//! to `max_error` -- as the walls on either side of any gap thinner than
+//! that already can.
+//!
 //! Single-threaded and visited in id order, so the result is a pure function of
 //! the input.
 
+use crate::extract::CellField;
 use crate::remesh::{EdgeKind, Remesh, VertexKind};
-use crate::walls::OUTSIDE;
+use crate::walls::{WallMesh, OUTSIDE};
 
 /// What one level asks for.
 #[derive(Clone, Copy, Debug)]
@@ -50,6 +70,10 @@ pub struct LevelParams {
     pub max_error: f64,
     /// Rounds of split, collapse, flip and relax.
     pub iterations: u32,
+    /// Let [`level`] drop contacts between different materials that are too
+    /// small for this level: see "Small contacts" in the module docs. Off,
+    /// every label's surface keeps exactly the fine surface's topology.
+    pub drop_small_contacts: bool,
 }
 
 #[inline]
@@ -340,6 +364,8 @@ pub struct Counts {
     pub moves: usize,
     /// Operations refused because they would have broken `max_error`.
     pub refused_for_error: usize,
+    /// Small contacts [`level`] separated before remeshing.
+    pub separated: usize,
 }
 
 struct State<'a> {
@@ -352,9 +378,32 @@ struct State<'a> {
     counts: Counts,
 }
 
+/// One level of detail, from the fine wall mesh: [`Remesh::new`], the level's
+/// small contacts separated if it asks for that, then [`Reference::new`] and
+/// [`remesh`].
+pub fn level(
+    walls: &WallMesh,
+    cells: &CellField,
+    resolution: [f64; 3],
+    params: &LevelParams,
+) -> (Remesh, Counts) {
+    let mut rm = Remesh::new(walls, cells, resolution);
+    let separated = if params.drop_small_contacts {
+        rm.separate_small_contacts(2.0 * params.max_error).len()
+    } else {
+        0
+    };
+    let reference = Reference::new(&rm);
+    let mut counts = remesh(&mut rm, &reference, params);
+    counts.separated = separated;
+    (rm, counts)
+}
+
 /// Remesh `rm` in place to one level of detail; see the module docs.
 ///
-/// `reference` must have been made from `rm` before any editing.
+/// `reference` must have been made from `rm` before any editing. Small
+/// contacts are left alone here whatever the parameters say: separating them
+/// changes what the reference is, so [`level`] does it before making one.
 pub fn remesh(rm: &mut Remesh, reference: &Reference, params: &LevelParams) -> Counts {
     let mut on_face: Vec<Vec<u32>> = vec![Vec::new(); rm.face_count()];
     let mut face = vec![u32::MAX; reference.samples.len()];
@@ -990,6 +1039,7 @@ mod tests {
         min_length: 0.5,
         max_error: 0.25,
         iterations: 5,
+        drop_small_contacts: false,
     };
 
     #[test]
@@ -1130,6 +1180,7 @@ mod tests {
             min_length: 0.5,
             max_error: 0.15,
             iterations: 4,
+            drop_small_contacts: false,
         };
         for seed in 0..3 {
             let a = noisy(22, 8, seed);
@@ -1149,6 +1200,51 @@ mod tests {
                 assert_eq!(euler(&after), euler(&before), "seed {seed} slot {s}");
             }
         }
+    }
+
+    /// Dropping small contacts changes which labels touch, but no label's own
+    /// surface loses its bound, and only the material left between a
+    /// separated pair changes topology (a hole through it closes).
+    #[test]
+    fn dropping_small_contacts_keeps_every_bound() {
+        let params = LevelParams {
+            max_length: 3.0,
+            min_length: 0.5,
+            max_error: 0.6,
+            iterations: 3,
+            drop_small_contacts: true,
+        };
+        let mut separated = 0;
+        for seed in 0..4 {
+            let a = noisy(22, 8, seed);
+            let e = faired(&a, true);
+            let walls = WallMesh::build(&e).unwrap();
+            let fine = Remesh::new(&walls, &e.cells, [1.0; 3]);
+            let mut rm = Remesh::new(&walls, &e.cells, [1.0; 3]);
+            let done = rm.separate_small_contacts(2.0 * params.max_error);
+            separated += done.len();
+            let reference = Reference::new(&rm);
+            remesh(&mut rm, &reference, &params);
+            let o = opts(&a);
+            for s in 0..e.meshes.len() as u32 {
+                let (before, after) = (fine.label_mesh(s, &o), rm.label_mesh(s, &o));
+                if after.faces.is_empty() {
+                    continue;
+                }
+                let err = max_distance(&before, &after);
+                assert!(
+                    err <= params.max_error + 1e-4,
+                    "seed {seed} slot {s}: {err}"
+                );
+                let between = done.iter().filter(|d| d.between == s).count() as i64;
+                assert_eq!(
+                    euler(&after),
+                    euler(&before) + 2 * between,
+                    "seed {seed} slot {s}"
+                );
+            }
+        }
+        assert!(separated > 0, "nothing was separated");
     }
 
     #[test]

@@ -85,6 +85,15 @@ pub enum VertexKind {
     Corner,
 }
 
+/// One patch [`Remesh::separate_small_contacts`] separated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Separated {
+    /// The two labels that touched there (front, then back or [`OUTSIDE`]).
+    pub labels: (u32, u32),
+    /// The material now between them (a label slot or [`OUTSIDE`]).
+    pub between: u32,
+}
+
 /// Which side of a face a label is on: 0 the front, 1 the back.
 type Side = u8;
 
@@ -434,6 +443,231 @@ impl Remesh {
             }
         }
         self.locked = (0..n).map(|v| self.pinned[v] || rim[v]).collect();
+    }
+
+    // --- separating small contacts ------------------------------------------
+
+    /// Separate every small wall patch that one other material surrounds, so
+    /// the two labels on it no longer touch there; see the module docs.
+    ///
+    /// A patch qualifies when its vertices fit in a box whose diagonal is at
+    /// most `max_extent` (physical units), it is a disk, and a single material
+    /// runs all the way round it. Nothing locked, fixed or pinned may be on it,
+    /// so pinches -- a label meeting itself -- and the chunk's seam layer are
+    /// never touched. Visited in face order, so the result is deterministic.
+    pub fn separate_small_contacts(&mut self, max_extent: f64) -> Vec<Separated> {
+        let mut out = Vec::new();
+        let mut seen = vec![false; self.faces.len()];
+        for seed in 0..seen.len() as u32 {
+            if seen[seed as usize] || !self.face_alive[seed as usize] {
+                continue;
+            }
+            let patch = self.patch(seed, &mut seen);
+            if let Some(between) = self.separable(&patch, max_extent) {
+                let labels = self.labels(patch[0]);
+                self.separate(&patch, between);
+                // The new faces are this patch's other side: done.
+                seen.resize(self.faces.len(), true);
+                out.push(Separated { labels, between });
+            }
+        }
+        out
+    }
+
+    /// The faces of `seed`'s wall reachable from it across wall edges.
+    fn patch(&self, seed: u32, seen: &mut [bool]) -> Vec<u32> {
+        seen[seed as usize] = true;
+        let mut out = vec![seed];
+        let mut i = 0;
+        while i < out.len() {
+            let t = self.faces[out[i] as usize];
+            i += 1;
+            for k in 0..3 {
+                let (u, v) = (t[k], t[(k + 1) % 3]);
+                if self.edge_kind(u, v) != EdgeKind::Wall {
+                    continue;
+                }
+                for g in self.edge_faces(u, v) {
+                    if !seen[g as usize] {
+                        seen[g as usize] = true;
+                        out.push(g);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The material that runs round `patch`, if the patch may be separated.
+    fn separable(&self, patch: &[u32], max_extent: f64) -> Option<u32> {
+        let (a, x) = self.labels(patch[0]);
+        let mut verts: Vec<u32> = patch.iter().flat_map(|&f| self.faces[f as usize]).collect();
+        verts.sort_unstable();
+        verts.dedup();
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for &v in &verts {
+            if self.locked[v as usize] || self.fixed[v as usize] || self.pinned[v as usize] {
+                return None;
+            }
+            let p = self.physical_position(v);
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        let d = sub(hi, lo);
+        if dot(d, d) > max_extent * max_extent {
+            return None;
+        }
+        let in_patch: FxHashSet<u32> = patch.iter().copied().collect();
+        let pair = |f: u32| {
+            let (p, q) = self.labels(f);
+            (p.min(q), p.max(q))
+        };
+        // Every face at the patch is on it, or on a wall between one of its
+        // labels and a single other material.
+        let mut between = None;
+        for &v in &verts {
+            for &f in self.faces_around(v) {
+                if in_patch.contains(&f) {
+                    continue;
+                }
+                let (p, q) = self.labels(f);
+                let other = if p == a || p == x {
+                    q
+                } else if q == a || q == x {
+                    p
+                } else {
+                    return None;
+                };
+                if other == a || other == x || *between.get_or_insert(other) != other {
+                    return None;
+                }
+            }
+        }
+        let y = between?;
+        // Each edge is inside the patch (two of its faces) or on its rim (one
+        // of its faces, one `a`-`y` and one `x`-`y`); the rim is one loop.
+        let mut edges: Vec<(u32, u32)> = patch
+            .iter()
+            .flat_map(|&f| {
+                let t = self.faces[f as usize];
+                (0..3).map(move |k| (t[k].min(t[(k + 1) % 3]), t[k].max(t[(k + 1) % 3])))
+            })
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        let (ay, xy) = ((a.min(y), a.max(y)), (x.min(y), x.max(y)));
+        let mut rim: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        for &(u, v) in &edges {
+            let faces = self.edge_faces(u, v);
+            let mine = faces.iter().filter(|f| in_patch.contains(f)).count();
+            match (faces.len(), mine) {
+                (2, 2) => {}
+                (3, 1) => {
+                    let mut others: Vec<(u32, u32)> = faces
+                        .iter()
+                        .filter(|f| !in_patch.contains(f))
+                        .map(|&f| pair(f))
+                        .collect();
+                    others.sort_unstable();
+                    let mut want = vec![ay, xy];
+                    want.sort_unstable();
+                    if others != want {
+                        return None;
+                    }
+                    rim.entry(u).or_default().push(v);
+                    rim.entry(v).or_default().push(u);
+                }
+                _ => return None,
+            }
+        }
+        if rim.is_empty() || rim.values().any(|n| n.len() != 2) {
+            return None;
+        }
+        let start = *rim.keys().min().unwrap();
+        let (mut prev, mut at, mut steps) = (start, rim[&start][0], 1);
+        while at != start {
+            let n = &rim[&at];
+            let next = if n[0] == prev { n[1] } else { n[0] };
+            prev = at;
+            at = next;
+            steps += 1;
+            if steps > rim.len() {
+                return None;
+            }
+        }
+        if steps != rim.len() {
+            return None;
+        }
+        // A disk.
+        let euler = verts.len() as i64 - edges.len() as i64 + patch.len() as i64;
+        (euler == 1).then_some(y)
+    }
+
+    /// Give `patch`'s back label its own copy of the patch, with `y` between
+    /// the two; see [`Remesh::separate_small_contacts`].
+    fn separate(&mut self, patch: &[u32], y: u32) {
+        let (a, x) = self.labels(patch[0]);
+        let in_patch: FxHashSet<u32> = patch.iter().copied().collect();
+        let mut verts: Vec<u32> = patch.iter().flat_map(|&f| self.faces[f as usize]).collect();
+        verts.sort_unstable();
+        verts.dedup();
+        let mut twin: FxHashMap<u32, u32> = FxHashMap::default();
+        for &v in &verts {
+            let w = self.voxel.len() as u32;
+            self.voxel.push(self.voxel[v as usize]);
+            self.incident.push(Vec::new());
+            self.vertex_alive.push(true);
+            self.locked.push(false);
+            self.fixed.push(false);
+            self.pinned.push(false);
+            twin.insert(v, w);
+        }
+        // `x`'s own faces round the rim move to the twins.
+        for &v in &verts {
+            let w = twin[&v];
+            for f in self.incident[v as usize].clone() {
+                let (p, q) = self.labels(f);
+                if in_patch.contains(&f) || (p != x && q != x) {
+                    continue;
+                }
+                for slot in self.faces[f as usize].iter_mut() {
+                    if *slot == v {
+                        *slot = w;
+                    }
+                }
+                self.incident[v as usize].retain(|&g| g != f);
+                self.incident[w as usize].push(f);
+            }
+        }
+        // Stored with the lower slot in front, as the wall mesh is, so the two
+        // sides of a wall edge still read as one wall.
+        let oriented = |t: [u32; 3], outward: u32, other: u32| {
+            if outward < other {
+                (t, outward, other)
+            } else {
+                ([t[0], t[2], t[1]], other, outward)
+            }
+        };
+        for &f in patch {
+            // Front is `a`, so the face is wound outward for it.
+            let t = self.faces[f as usize];
+            let (ta, fa, ba) = oriented(t, a, y);
+            self.faces[f as usize] = ta;
+            self.front[f as usize] = fa;
+            self.back[f as usize] = ba;
+            let tx = [twin[&t[0]], twin[&t[2]], twin[&t[1]]];
+            let (tx, fx, bx) = oriented(tx, x, y);
+            let g = self.faces.len() as u32;
+            self.faces.push(tx);
+            self.front.push(fx);
+            self.back.push(bx);
+            self.face_alive.push(true);
+            for w in tx {
+                self.incident[w as usize].push(g);
+            }
+        }
     }
 
     /// Number of vertex ids, live or not.
