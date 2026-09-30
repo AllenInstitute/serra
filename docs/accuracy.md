@@ -85,6 +85,34 @@ It is a safety rail, not a substitute for choosing the right filter. It bounds
 how far the surface can stray from the data; it does not remove the Laplacian's
 systematic inward bias, it only clips it.
 
+### The cell bound, and why it keeps a margin
+
+`fairing` also keeps each vertex inside its own cell (Frisken's containment),
+intersected with `max_deviation`. Clamping to the cell *itself* let two
+vertices meet. Neighbouring cells share a face or an edge, and when smoothing
+pushed both vertices against it they were clamped to the same point. That left
+a zero-length edge and a degenerate triangle. On the 256³ MICrONS crop at
+`fairing=20` + Taubin, 1,094 of 23.8 million triangles were degenerate, and a
+noisy synthetic volume produced thousands. 89% of the collapsed points sat on a
+cell edge, where two such clamps meet.
+
+Each vertex is now held 16/256 of a voxel inside its cell (`CELL_MARGIN` in
+`src/smooth.rs`). Two distinct cells differ along at least one axis, so their
+vertices always end at least 1/8 of a voxel apart. Placement never comes within
+43/256 of a cell's side, so unsmoothed meshes are unchanged. Measured on the
+crop, `fairing=20` + Taubin:
+
+| margin | degenerate triangles, every 4th object | shortest edge, 0.01st pct | quality, worst 0.1% | sphere r=20 volume / area error |
+| --- | --- | --- | --- | --- |
+| 0 (before) | 226 | 0.033 vx | 0.18 | +0.12% / +0.45% |
+| **16** | **0** | **0.172 vx** | **0.26** | **+0.09% / +0.52%** |
+| 32 | 0 | 0.270 vx | 0.38 | +0.18% / +1.68% |
+
+At 32 the margin starts to restrict the smoothing itself, and sphere area error
+triples. The other figures on this page were measured before the margin was added and
+have not been rerun; the sphere column above shows the size of the change to
+expect.
+
 ### Tangential sweeps: the triangles, not the surface
 
 `fairing_tangential=k` runs `k` more cell-domain sweeps after `fairing` (which

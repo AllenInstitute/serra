@@ -311,3 +311,51 @@ class TestHardManifoldCases:
         unique = np.unique(mesh.vertices, axis=0)
         assert len(unique) <= len(mesh.vertices)
         assert mesh.volume() > 0
+
+
+class TestFairingKeepsVerticesApart:
+    """Cell-domain fairing must never move two vertices onto one point.
+
+    It clamps each vertex to its cell, and neighbouring cells share a boundary.
+    Clamped to the cell itself, two vertices pushed against a shared face or
+    edge landed on the same point, leaving a zero-length edge and a degenerate
+    triangle: about 1 in 20,000 triangles on real neuropil, and thousands in
+    the noisy volume below. Each vertex is now held 16/256 of a voxel inside
+    its cell, and two distinct cells always differ along some axis, so their
+    vertices end at least 32/256 of a voxel apart.
+    """
+
+    @staticmethod
+    def noisy_volume(seed=0, shape=(32, 32, 32), labels=12):
+        """Overlapping blobs with 8% of voxels relabelled at random: thin,
+        jagged pieces and isolated voxels, like the worst of real data."""
+        rng = np.random.default_rng(seed)
+        grid = np.indices(shape).astype(np.float64)
+        a = np.zeros(shape, np.uint32)
+        for n in range(labels):
+            centre = rng.uniform(0.2, 0.8, 3) * np.array(shape)
+            d = sum((grid[k] - centre[k]) ** 2 for k in range(3))
+            a[d <= rng.uniform(4.0, 9.0) ** 2] = n + 1
+        noise = rng.random(shape) < 0.08
+        a[noise] = rng.integers(1, labels + 1, noise.sum())
+        return a
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"fairing": 20},
+            {"fairing": 20, "fairing_taubin": True},
+            {"fairing": 20, "fairing_taubin": True, "fairing_tangential": 5},
+            {"fairing": 40, "max_deviation": 2.0},
+        ],
+    )
+    def test_no_edge_is_shorter_than_the_margin_allows(self, kwargs):
+        mesher = serra_mesh.Mesher(**kwargs).mesh(self.noisy_volume(), close=True)
+        shortest = np.inf
+        for label in mesher.ids():
+            mesh = mesher.get(int(label))
+            p = mesh.vertices[mesh.faces].astype(np.float64)
+            for k in range(3):
+                edge = np.linalg.norm(p[:, (k + 1) % 3] - p[:, k], axis=1)
+                shortest = min(shortest, edge.min())
+        assert shortest >= 32 / 256 - 1e-6

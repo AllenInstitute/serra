@@ -153,6 +153,17 @@ impl Smoothing {
     }
 }
 
+/// How far inside its cell, in 1/256-voxel units, fairing keeps a vertex.
+///
+/// Clamping to the cell itself let two neighbouring vertices meet: cells that
+/// share a face or an edge share that boundary, and when smoothing pushes both
+/// against it they are clamped to the same point, leaving a zero-length edge
+/// and a degenerate triangle. Two distinct cells differ in at least one axis
+/// index, so holding each vertex this far inside keeps any two at least twice
+/// this far apart along that axis. Placement itself never comes within 43
+/// units of a cell's side, so the margin cannot change an unsmoothed mesh.
+pub const CELL_MARGIN: f32 = 16.0;
+
 /// Settings for fairing in the cell domain.
 ///
 /// This is Frisken's surface fairing rather than serra's per-label relaxation:
@@ -170,7 +181,9 @@ pub struct Fairing {
     /// nested: a placed vertex sits between 43/256 and 213/256 of the way
     /// across its cell, so the cell is the tighter bound on one side and the
     /// looser on the other. Taking both keeps the documented `max_deviation`
-    /// guarantee true and adds Frisken's containment on top.
+    /// guarantee true and adds Frisken's containment on top. The cell is
+    /// shrunk by [`CELL_MARGIN`] on every side first, so that neighbouring
+    /// vertices cannot be clamped onto the same point.
     pub max_deviation: f64,
     /// Restrict junction cells to their junction neighbours.
     pub junction_rule: bool,
@@ -380,8 +393,8 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
         for a in 0..3 {
             let base = (placed[i][a] - offsets[a]) as f32;
             let anchor = placed[i][a] as f32;
-            let lo = base.max(anchor - limit);
-            let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+            let lo = (base + CELL_MARGIN).max(anchor - limit);
+            let hi = (base + SUBVOXEL as f32 - CELL_MARGIN).min(anchor + limit);
             out[a] = moved[a].clamp(lo, hi);
         }
         out
@@ -503,8 +516,8 @@ pub fn fair(cells: &mut CellField, params: &Fairing, parallel: bool) {
             for a in 0..3 {
                 let base = (placed[i][a] - offsets[a]) as f32;
                 let anchor = placed[i][a] as f32;
-                lo[a] = base.max(anchor - limit);
-                hi[a] = (base + SUBVOXEL as f32).min(anchor + limit);
+                lo[a] = (base + CELL_MARGIN).max(anchor - limit);
+                hi[a] = (base + SUBVOXEL as f32 - CELL_MARGIN).min(anchor + limit);
                 let moved = here[a] + d[a];
                 inside &= moved >= lo[a] && moved <= hi[a];
             }
@@ -1073,8 +1086,8 @@ mod fairing_tests {
                     let moved = current[i][a] + step * (average - current[i][a]);
                     let base = (cells.positions[i][a] - CENTROID[mask][a]) as f32;
                     let anchor = cells.positions[i][a] as f32;
-                    let lo = base.max(anchor - limit);
-                    let hi = (base + SUBVOXEL as f32).min(anchor + limit);
+                    let lo = (base + CELL_MARGIN).max(anchor - limit);
+                    let hi = (base + SUBVOXEL as f32 - CELL_MARGIN).min(anchor + limit);
                     next[i][a] = moved.clamp(lo, hi);
                 }
             }
@@ -1185,8 +1198,11 @@ mod fairing_tests {
         let before = spread_x(&e.cells.positions);
         let literal = fair_reference(&e.cells, &p, false);
         let ours = fair_reference(&e.cells, &p, true);
+        // Collapsed to the floor `CELL_MARGIN` sets: the two sides can no
+        // longer meet exactly, but they end one eighth of a voxel apart, which
+        // is the sheet gone all the same.
         assert!(
-            spread_x(&literal) < before * 0.05,
+            spread_x(&literal) <= 2.0 * CELL_MARGIN + 1.0,
             "expected the literal stencil to collapse the sheet, got {} of {before}",
             spread_x(&literal)
         );
