@@ -11,6 +11,7 @@ pub mod mesh;
 pub mod orient;
 pub mod place;
 pub mod python;
+pub mod remesh;
 pub mod simplify;
 pub mod smooth;
 pub mod tables;

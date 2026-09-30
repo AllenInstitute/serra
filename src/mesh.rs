@@ -60,6 +60,18 @@ fn dist2(a: &[i32; 3], b: &[i32; 3]) -> i64 {
     s
 }
 
+/// A fixed-point position in voxel units. Exact: every value is a small
+/// integer over a power of two.
+#[inline]
+pub(crate) fn fixed_to_voxel(p: [i32; 3]) -> [f64; 3] {
+    let scale = SUBVOXEL as f64;
+    [
+        p[0] as f64 / scale,
+        p[1] as f64 / scale,
+        p[2] as f64 / scale,
+    ]
+}
+
 /// Which diagonal to split a quad along.
 ///
 /// The shorter diagonal wins, which keeps triangles well shaped. The subtlety
@@ -168,7 +180,8 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
     };
     let pinned = |v: u32| raw.pinned[v as usize];
     finish(
-        &raw.positions,
+        raw.positions.len(),
+        |v| fixed_to_voxel(raw.positions[v as usize]),
         &faces,
         |v| raw.cells[v as usize],
         |v| !is_suspect.is_empty() && is_suspect[v as usize],
@@ -185,9 +198,12 @@ pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions
 /// Shared by [`build_with`] and [`crate::walls`], so a label's surface comes out
 /// bit-identical whichever of the two it was built from.
 ///
-/// `cell_of`, `suspect` and `pinned` are asked of the input's vertex ids.
+/// `voxel_of` gives a vertex's position in voxel units, before resolution and
+/// axis order are applied; `cell_of`, `suspect` and `pinned` are asked of the
+/// input's vertex ids too.
 pub(crate) fn finish(
-    positions: &[[i32; 3]],
+    vertex_count: usize,
+    voxel_of: impl Fn(u32) -> [f64; 3],
     faces: &[[u32; 3]],
     cell_of: impl Fn(u32) -> u32,
     suspect: impl Fn(u32) -> bool,
@@ -195,7 +211,7 @@ pub(crate) fn finish(
     opts: &MeshOptions,
 ) -> TriangleMesh {
     // --- drop unreferenced vertices, preserving order ------------------------
-    let mut remap = vec![u32::MAX; positions.len()];
+    let mut remap = vec![u32::MAX; vertex_count];
     let mut kept: Vec<u32> = Vec::new();
     for f in faces {
         for &v in f {
@@ -207,16 +223,10 @@ pub(crate) fn finish(
     }
 
     // --- index space -> physical space ---------------------------------------
-    let scale = SUBVOXEL as f64;
     let vertices: Vec<[f32; 3]> = kept
         .iter()
         .map(|&v| {
-            let p = &positions[v as usize];
-            let voxel = [
-                p[0] as f64 / scale,
-                p[1] as f64 / scale,
-                p[2] as f64 / scale,
-            ];
+            let voxel = voxel_of(v);
             let phys = opts.layout.to_physical(voxel, opts.resolution, opts.shape);
             [phys[0] as f32, phys[1] as f32, phys[2] as f32]
         })

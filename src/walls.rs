@@ -48,7 +48,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::extract::{CellField, Extraction};
-use crate::mesh::{finish, split_along_first_diagonal, MeshOptions, TriangleMesh};
+use crate::mesh::{finish, fixed_to_voxel, split_along_first_diagonal, MeshOptions, TriangleMesh};
 use crate::tables::AMBIGUOUS_CELL;
 
 /// The label slot recorded on the far side of a wall facing background.
@@ -335,7 +335,8 @@ impl WallMesh {
         let pinned = |v: u32| cells.pinned[self.cells[v as usize] as usize];
         let cell_of = |v: u32| self.cells[v as usize];
         finish(
-            &self.positions,
+            self.positions.len(),
+            |v| fixed_to_voxel(self.positions[v as usize]),
             &faces,
             cell_of,
             suspect,

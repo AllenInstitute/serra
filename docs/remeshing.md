@@ -79,8 +79,8 @@ coarse vertex as the same on the fine mesh (in the manner of MAPS, Lee et al.
 | step | what | status |
 | --- | --- | --- |
 | 3a | `WallMesh` (`src/walls.rs`): every wall once, and each label's surface recovered exactly | **done** |
-| 3b | vertex classification and the four operations on the shared mesh | next |
-| 3c | the adaptive remeshing loop, with `max_error` against the fine surface | |
+| 3b | vertex classification and the four operations on the shared mesh (`src/remesh.rs`) | **done** |
+| 3c | the adaptive remeshing loop, with `max_error` against the fine surface | next |
 | 3d | seam curves simplified identically in both chunks | |
 | 3e | vertex maps between levels, each direction optional | |
 | 3f | `mesher.lods()`, documentation and benchmarks against the current simplifier | |
@@ -114,3 +114,57 @@ per-label triangle count. Two things had to be got right on the way:
 Building the 192³ crop's shared mesh takes about 2.6 s, single-threaded, as a
 pass after extraction. Moving it into the extraction pass is the fix once
 everything else is in place.
+
+### 3b: classification and the four operations
+
+`Remesh` (`src/remesh.rs`) holds the shared mesh in editable form, with the
+faces around each vertex, and offers `split`, `collapse`, `flip` and
+`relocate`. Each checks whether it is allowed and leaves the mesh untouched if
+not, so a remeshing policy can try operations and keep those that succeed. Vertex
+and edge kinds are read from the label pairs of the triangles around them, so
+they stay correct as the mesh changes.
+
+A collapse must pass all of these:
+
+- the link condition on the whole mesh, **and on each label's surface alone**. A
+  vertex can be joined to both ends through one label's faces while the face
+  opposite it on the edge belongs to another label;
+- a label with faces at both ends must have a face on the edge itself.
+  Otherwise the edge belongs to other labels' walls, and collapsing it glues two
+  separate points of this label's surface together, which the link test cannot
+  see;
+- no two faces may end up on the same three vertices. A tetrahedron otherwise
+  collapses into two coincident triangles, a closed "surface" the next collapse
+  deletes outright;
+- a curve must not close up on itself, and no face may turn over or become
+  degenerate.
+
+The last three were each found by the fuzz tests, not anticipated. Those tests
+run thousands of random operations and check after every batch that every
+label's surface is still a 2-manifold with the same Euler characteristic and
+open-edge count. A second variant mostly collapses, which drives small
+components down to the fewest faces their topology allows. By default each runs
+4 seeds; `SERRA_FUZZ_SEEDS=120` ran both clean, about a million operations.
+
+**Locked vertices** keep every triangle around them exactly as it is: pinned
+seam vertices, vertices on any label's open rim, vertices from ambiguous cells,
+and pinches. Two points about them:
+
+- **The rim has to be judged per label.** Where one label's surface ends at the
+  volume boundary, other labels' walls can still meet along the same edge, so
+  the combined mesh shows no rim there. The fuzz tests found this too.
+- **It is a lot of the surface.** On the 192³ crop 2.0% of vertices are locked
+  and 5.9% of triangles touch one. That is harmless at full resolution, but at
+  a 10× reduction those triangles would be over half the output. Before 3c can
+  produce coarse levels, vertices from ambiguous cells need a real treatment
+  rather than a lock.
+
+Surfaces cut open by the volume boundary can touch that boundary at a single
+vertex. `get()` has always produced this for open volumes, in about 1 label in
+12 of the synthetic fixtures, and stitching resolves it. The fuzz checker exempts
+rim vertices from the one-fan test for that reason; they are locked, so
+remeshing cannot change them.
+
+Setting up `Remesh` takes 4.9 s on the 192³ crop, on top of 2.6 s to build the
+shared mesh. Both are single-threaded passes, and both are on the list to move
+into the extraction.
