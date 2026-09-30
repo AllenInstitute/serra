@@ -38,6 +38,7 @@ The crate is a pipeline, one module per stage. Data flows top to bottom.
 | `src/place.rs` | Where a cell's vertex goes, plus relaxation |
 | `src/extract.rs` | The single pass, and its parallel banding |
 | `src/mesh.rs` | Physical coordinates, triangulation, normals |
+| `src/flip.rs` | Optional edge flips after triangulation, identical on both copies of a shared wall |
 | `src/python.rs` | PyO3 bindings — the only module that knows about Python |
 | `python/serra_mesh/` | `Mesher` front end, `Mesh` container, file formats |
 
@@ -123,11 +124,23 @@ uv run pytest tests -q                  # everything else
 | `tests/test_determinism.py` | Order, dtype, threads, strides |
 | `tests/test_relaxation.py` | Smoothing quality and its deviation bound |
 | `tests/test_tangential.py` | Tangential sweeps: triangle quality, unchanged shape, walls and junction curves |
+| `tests/test_flips.py` | Edge flips: quality, validity, shared walls, stitching, threads |
 
 Helpers live in `tests/conftest.py`, including a proper non-manifold **vertex**
 check. An edge-only check is not enough: two blocks meeting at a single corner
 use every edge exactly twice, yet the shared vertex is a pinch point. The link
 of each vertex must be a single cycle.
+
+Edge flipping checks two of its own invariants in debug builds only: that no two
+flips in a pass share a triangle, and that its incremental re-evaluation of
+edges agrees with a full one. The Rust tests run in debug, but the Python tests
+normally run against a release build, so after changing `src/flip.rs` also run
+them against a debug one:
+
+```bash
+uv run maturin develop && uv run pytest tests/test_flips.py -q
+uv run maturin develop --release          # back to the fast build
+```
 
 !!! note "Axis conventions in tests"
     Masks are built with `z, y, x = np.ogrid[...]`, so `x` varies along **array
