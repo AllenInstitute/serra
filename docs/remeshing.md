@@ -262,3 +262,55 @@ What is not good enough yet:
   ≤640 nm with ε 80 nm gave more faces (218k) than ≤320 nm with ε 40 nm.
 - **Speed.** 27–32 s, against QEM's 1–3 s. Nothing is optimised yet: the loop
   allocates in every step and rebuilds its edge list every pass.
+
+### 3c, part 3: where the remaining bad triangles are
+
+At the 320 nm level, triangles touching only wall vertices are 0.3% bad (a
+smallest angle under 20°). Nearly all of the rest touch a vertex that cannot be
+removed:
+
+| most constrained vertex on the triangle | share with an angle under 20° | share of all bad triangles |
+| --- | --- | --- |
+| wall only | 0.3% | 0.7% |
+| curve | 3.0% | 11% |
+| corner | 8.7% | 38% |
+| fixed | 31.9% | 50% |
+
+Three changes went in on the way to this:
+
+- Corners may merge with another corner along the junction edge between them.
+- Corners and curve vertices may collapse into a fixed vertex, with each label
+  keeping the identity it already uses there across the edge.
+- An edge shorter than the level's minimum is collapsed even if that makes a
+  long edge.
+
+Together these took bad triangles from 9.9% to 8.5% and faces from 97k to 88k.
+They did not reach the rest, and instrumenting every check shows why. The
+remaining bad triangles sit in clusters of corners and fixed vertices joined by
+junction edges of 20–30 nm, under one voxel, where several labels meet inside a
+single voxel. Of 3,928 collapses there that `Remesh::collapse` refused, 3,005
+were refused because a label sees the fixed vertex as two identities and the
+vertex being collapsed touches both. Merging it would glue that label's two
+pieces together at a point, which is the pinch the aliases exist to prevent.
+Most of the rest were refused because they would change the network of junction
+curves (434 by the link condition, 430 because a curve would close on itself).
+
+So these refusals are correct under the current rules: **every label's
+topology, and every contact between labels, is kept exactly at every level,
+down to sub-voxel ones.** Improving quality further there means deciding to let
+coarse levels simplify topology below the error bound. That is a design
+decision, not a fix.
+
+Benchmark after these changes, 96³ crop, same setup as above:
+
+| method | faces | q mean | q p1 | <20° | measured error | shared positions | time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| remesh ≤80 nm, ε 10 nm | 376,442 | 0.895 | 0.416 | 2.3% | 10.0 nm | 74.1% | 32 s |
+| remesh ≤160 nm, ε 20 nm | 212,100 | 0.860 | 0.332 | 5.3% | 20.0 nm | 76.8% | 27 s |
+| remesh ≤320 nm, ε 40 nm | 148,372 | 0.820 | 0.311 | 9.0% | 40.0 nm | 76.4% | 26 s |
+| QEM, ε 40 nm | 218,312 | 0.759 | 0.178 | 12.1% | 63.3 nm | 16.2% | 3.2 s |
+| remesh ≤640 nm, ε 80 nm | 175,802 | 0.806 | 0.317 | 8.1% | 80.0 nm | 71.7% | 28 s |
+| QEM, same faces, ε 80 nm | 175,978 | 0.771 | 0.230 | 10.4% | 72.4 nm | 8.5% | 3.1 s |
+
+The ≤640 nm level still ends with more faces than ≤320 nm. That, and speed,
+remain open.

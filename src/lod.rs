@@ -620,7 +620,9 @@ impl State<'_> {
             let rank = |k: VertexKind| match k {
                 VertexKind::Wall => 0,
                 VertexKind::Curve => 1,
-                _ => 2,
+                VertexKind::Corner => 2,
+                VertexKind::Fixed => 3,
+                VertexKind::Locked => 4,
             };
             let (ka, kb) = (self.rm.vertex_kind(a), self.rm.vertex_kind(b));
             let (u, v, ku, kv) = if rank(ka) <= rank(kb) {
@@ -628,7 +630,14 @@ impl State<'_> {
             } else {
                 (b, a, kb, ka)
             };
-            if !matches!(ku, VertexKind::Wall | VertexKind::Curve) {
+            // Corners may merge into another corner or a fixed vertex along the
+            // junction edge between them: clusters of both, joined by edges
+            // shorter than a voxel, form where several labels meet inside one
+            // voxel, and would otherwise pin every coarser level.
+            let movable = matches!(ku, VertexKind::Wall | VertexKind::Curve)
+                || (ku == VertexKind::Corner
+                    && matches!(kv, VertexKind::Corner | VertexKind::Fixed));
+            if !movable {
                 continue;
             }
             // Where both may move, meet in the middle, on the surface.
@@ -636,7 +645,8 @@ impl State<'_> {
             region.extend_from_slice(self.rm.faces_around(v));
             region.sort_unstable();
             region.dedup();
-            let at = if ku == kv {
+            // (A corner merging into another stays where the other is.)
+            let at = if ku == kv && ku != VertexKind::Corner {
                 let mid = scale(add(self.pos(u), self.pos(v)), 0.5);
                 if ku == VertexKind::Wall {
                     self.project(mid, &region, Some(self.wall_of(u)))
@@ -647,11 +657,13 @@ impl State<'_> {
                 self.pos(v)
             };
             // Botsch & Kobbelt: never create an edge that would itself be split.
-            let long = self
-                .rm
-                .neighbours(u)
-                .into_iter()
-                .any(|w| w != v && norm(sub(at, self.pos(w))) > 4.0 / 3.0 * self.target(v, w));
+            // Except to remove an edge already shorter than the level's
+            // minimum, which should go whatever it leaves.
+            let long =
+                len >= self.params.min_length
+                    && self.rm.neighbours(u).into_iter().any(|w| {
+                        w != v && norm(sub(at, self.pos(w))) > 4.0 / 3.0 * self.target(v, w)
+                    });
             if long {
                 continue;
             }

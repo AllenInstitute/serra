@@ -21,11 +21,13 @@
 //!   may move within that wall and collapse into any neighbour;
 //! * a **curve** vertex, on a curve where three or more labels meet (exactly
 //!   two junction edges), may move along its curve and collapse along it;
-//! * a **corner**, where curves meet or end, never moves and is never
-//!   collapsed away, though neighbours may collapse into it;
+//! * a **corner**, where curves meet or end, never moves; neighbours may
+//!   collapse into it, and it may merge with another corner along the
+//!   junction edge between them;
 //! * a **fixed** vertex is one that different labels see as different numbers
-//!   of vertices (below). It never moves and nothing collapses into it, but
-//!   the triangles around it may change;
+//!   of vertices (below). It never moves, but the triangles around it may
+//!   change, and a neighbour may collapse into it when every label on the
+//!   collapsing edge sees it as a single one of its identities;
 //! * a **locked** vertex keeps every triangle around it exactly as it is: the
 //!   chunk's outer cell layer, so neighbouring chunks still agree about
 //!   everything near their seam, and any label's open rim at the volume's
@@ -779,6 +781,24 @@ impl Remesh {
             {
                 self.voxel[v as usize]
             }
+            // Two corners joined by a junction edge: contracting it merges two
+            // points where curves meet. Most corners at the fine level come
+            // from voxel-scale noise, and would otherwise pin every coarser
+            // level to them.
+            (VertexKind::Corner, VertexKind::Corner)
+                if self.edge_kind(u, v) == EdgeKind::Junction =>
+            {
+                self.voxel[v as usize]
+            }
+            // Into a fixed vertex, which stays put. Each label keeps whichever
+            // of its identities there the faces on the edge already use; see
+            // below.
+            (VertexKind::Wall, VertexKind::Fixed) => self.voxel[v as usize],
+            (VertexKind::Curve | VertexKind::Corner, VertexKind::Fixed)
+                if self.edge_kind(u, v) == EdgeKind::Junction =>
+            {
+                self.voxel[v as usize]
+            }
             _ => return false,
         };
         let dying = self.edge_faces(u, v);
@@ -830,13 +850,32 @@ impl Remesh {
                 labels.insert(self.back[f as usize]);
             }
         }
+        // Which identity of `v` each label's faces on the edge use. `u` is
+        // never fixed; `v` may be, and a label seeing it as several vertices
+        // must be joining exactly one of them, or the collapse is refused.
+        let mut v_ids: FxHashMap<u32, u32> = FxHashMap::default();
+        for &f in &dying {
+            for (side, l) in [(0, self.front[f as usize]), (1, self.back[f as usize])] {
+                if l == OUTSIDE {
+                    continue;
+                }
+                let id = self.identity(f, v, side);
+                if *v_ids.entry(l).or_insert(id) != id {
+                    return false;
+                }
+            }
+        }
         for &l in &labels {
-            // `u` and `v` are neither fixed nor aliased, so only their
-            // neighbours' identities can differ from the shared ids.
+            let v_id = v_ids.get(&l).copied();
+            // A label's neighbours of `x`, in its own identities -- and, at a
+            // fixed `v`, only through the faces where it sees `v` as `v_id`.
             let around = |x: u32| {
                 let mut n: Vec<u32> = Vec::new();
                 for &f in &self.incident[x as usize] {
                     if let Some(side) = self.side_of(f, l) {
+                        if x == v && v_id.is_some_and(|id| self.identity(f, v, side) != id) {
+                            continue;
+                        }
                         for w in self.faces[f as usize] {
                             if w != x {
                                 n.push(self.identity(f, w, side));
@@ -852,7 +891,7 @@ impl Remesh {
             let common: Vec<u32> = lu
                 .iter()
                 .copied()
-                .filter(|w| *w != v && lv.binary_search(w).is_ok())
+                .filter(|w| *w != v && Some(*w) != v_id && lv.binary_search(w).is_ok())
                 .collect();
             let mut opp: Vec<u32> = dying
                 .iter()
@@ -880,7 +919,7 @@ impl Remesh {
         }
         // A curve must not close up on itself: the curve neighbours of `u`
         // and `v`, other than each other, must differ.
-        if ku == VertexKind::Curve {
+        if matches!(ku, VertexKind::Curve | VertexKind::Corner) {
             let (cu, cv) = (self.curve_neighbours(u), self.curve_neighbours(v));
             if cu.iter().any(|w| *w != v && cv.contains(w)) {
                 return false;
@@ -929,6 +968,15 @@ impl Remesh {
             for slot in self.faces[f as usize].iter_mut() {
                 if *slot == u {
                     *slot = v;
+                }
+            }
+            // The rewired faces join, for each label, the identity of `v` the
+            // edge's faces used.
+            for (side, l) in [(0, self.front[f as usize]), (1, self.back[f as usize])] {
+                if let Some(&id) = v_ids.get(&l) {
+                    if id != v {
+                        self.alias.insert((f, v, side), id);
+                    }
                 }
             }
             self.incident[v as usize].push(f);
