@@ -30,6 +30,8 @@ exact vertex equality. The three entry parameters (`relaxation`, `taubin`,
 
 Separately from the grid, `fairing_tangential=k` improves the *triangles*
 rather than the surface; see [Tangential sweeps](#tangential-sweeps-the-triangles-not-the-surface).
+So does `edge_flips=k`, by changing which vertices are joined rather than
+where they are; see [Edge flips](#edge-flips-the-connectivity-not-the-vertices).
 
 ### The domain: who owns a shared wall
 
@@ -148,6 +150,71 @@ sweeps deliberately do not do.
 
 **When to use it.** Worth it on an unsmoothed mesh, where it removes slivers
 for almost nothing. After Taubin fairing it is a small, cheap gain.
+
+### Edge flips: the connectivity, not the vertices
+
+`edge_flips=k` runs up to `k` passes of edge flipping when `get()`
+triangulates a surface. An edge shared by two triangles is swapped for the
+other diagonal of their quad when that makes the worse triangle better. This is
+the flip step of isotropic remeshing (Botsch & Kobbelt 2004). Splitting each
+quad along its shorter diagonal, which serra always does, never looks past the
+quad; flipping can. No vertex moves, so seams, `max_deviation` and the vertex
+set are untouched.
+
+Each label's mesh is flipped on its own, so the multi-material rules have to
+make both copies of a shared wall flip identically:
+
+- **Only edges inside one wall flip.** An edge qualifies only if one endpoint
+  comes from a *sheet cell*: exactly two labels, meeting in one sheet. Every
+  triangle around such a vertex belongs to that wall in both labels' meshes.
+  Edges along a junction curve never qualify. "No junction face" is not enough
+  on its own: two isolated corners of different labels at opposite ends of a
+  body diagonal share no face, yet the cell holds three labels. The sheet-cell
+  table is checked over all 4140 corner labellings.
+- **Decisions read only that wall**, from the four shared positions taken in a
+  canonical order, so rounding is identical in both copies.
+- **Passes do not depend on storage order.** Every edge is judged on the same
+  surface, and an edge flips only if it beats every neighbour it shares a
+  triangle with.
+- **Frozen cells never take part:** the chunk's outer layer, so chunks still
+  stitch, and cells with an ambiguous face, the only ones the manifold repair
+  can split.
+
+A pair is flipped only if both it and its replacement are within 20° of flat,
+and convex, so the flip cannot fold the surface. A pair whose worse triangle
+already has quality ≥ 0.7 is skipped without the full test.
+
+`bench/flips.py`, closed meshes of every object in a 256³ corner of the MICrONS
+chunk, after `fairing=20` + Taubin. Degree 6 is the share of vertices with six
+neighbours; `get()` is for every object, single-threaded:
+
+| voxels | settings | q mean | q p1 | min angle < 20° | area CV | degree 6 | `get()` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32×32×40 | — | 0.878 | 0.506 | 0.98% | 0.355 | 56.6% | 0.85 s |
+| 32×32×40 | `edge_flips=3` | 0.878 | **0.532** | 0.89% | 0.347 | 56.0% | 4.5 s |
+| 4×4×40 | — | 0.327 | 0.088 | 84.7% | 0.523 | 56.6% | 0.79 s |
+| 4×4×40 | `edge_flips=3` | **0.561** | **0.103** | **45.4%** | 0.757 | 30.1% | 11.0 s |
+
+**Where it earns its cost: anisotropic voxels.** At 4×4×40 nm a quad's two
+diagonals differ in physical length by up to 10×, and which one a triangle is
+cut along decides whether it is a sliver. Flips cut slivers from 85% to 45% and
+raise mean quality from 0.33 to 0.56. Near-isotropic voxels leave little for
+them to fix: at 32×32×40 nm the worst triangles improve a little and the mean
+not at all.
+
+**What it costs.** Connectivity work per object: 5× the time of `get()` at
+32×32×40 nm and 14× at 4×4×40 nm, where far more edges qualify. `get()`
+releases the GIL, so objects can be fetched from several threads. On an
+anisotropic volume the flips also concentrate edges: fewer vertices keep six
+neighbours, and triangle areas spread wider. With the vertex set fixed there
+is no avoiding that: a surface stretched 10:1 cannot be tiled evenly by its own
+cells' vertices. Adding and removing vertices (splitting long edges, collapsing
+short ones) is what fixes it, and that is the step after this one.
+
+**Volume** changes by the thin tetrahedra between swapped diagonals. On the
+anisotropic radius-16 sphere it moves *toward* the truth: from +0.56% over the
+exact volume to +0.25%. The tests assert that neither volume nor mean distance
+to the true sphere gets worse.
 
 ### The recommendation
 
