@@ -207,3 +207,58 @@ vertices are fixed and **no** triangle is frozen, against 5.9% before. Open, 2.2
 of triangles stay frozen: the open rim and the chunk's outer cell layer, which
 3d addresses. The fuzz tests, now exercising operations around fixed vertices,
 pass 120 seeds of each variant.
+
+### 3c, part 2: the remeshing loop, first working version
+
+`src/lod.rs` remeshes the shared mesh to one level of detail. It runs Botsch and
+Kobbelt's loop (split, collapse, flip, relax, project), with a target length
+from curvature after Dunyach et al., and bounds every operation by `max_error`.
+
+**The bound is exact at every fine vertex, per label.** The unit it keeps is a
+*sample*: one per fine vertex per label whose surface the vertex is on. Each
+sample is assigned to a coarse triangle carrying its label. Before an operation
+runs, the triangles it would produce are computed, and it goes ahead only if
+every sample on the triangles it changes stays within `max_error` of one of its
+label's new triangles. A sample on an untouched triangle keeps its distance. So
+no fine vertex is ever further than `max_error` from its own label's coarse
+surface. The first version tracked one assignment per fine vertex, to the
+nearest triangle of any label. A vertex on the a|b wall could then sit near an
+a|c triangle while a's own surface moved away, and the measured error was up to
+four times the bound. A bug in the flip pass, which assigned samples to the
+wrong one of its two triangles, did the same; a noisy multi-label test now
+catches it.
+
+First measurements, on 96³ of the MICrONS crop after `fairing=20` + Taubin,
+32×32×40 nm. QEM is the current simplifier, asked for the same number of faces
+with the same `max_error`, and every error is *measured* (per label, every fine
+vertex, via a spatial grid):
+
+| method | faces | q mean | q p1 | <20° | measured error | shared positions | time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| fine | 1,384,732 | 0.878 | 0.524 | 0.82% | — | 77.3% | — |
+| remesh ≤80 nm, ε 10 nm | 396,286 | **0.894** | 0.428 | 2.0% | **10.0 nm** | **73.2%** | 32 s |
+| QEM, ε 10 nm | 1,367,400* | 0.880 | 0.545 | 0.6% | 12.5 nm | 75.2% | 0.8 s |
+| remesh ≤160 nm, ε 20 nm | 222,520 | **0.850** | **0.329** | 6.1% | **20.0 nm** | **76.5%** | 27 s |
+| QEM, ε 20 nm | 797,956* | 0.820 | 0.298 | 4.3% | 33.8 nm | 47.8% | 1.9 s |
+| remesh ≤320 nm, ε 40 nm | 163,266 | **0.804** | **0.310** | **10.7%** | **40.0 nm** | **75.5%** | 27 s |
+| QEM, ε 40 nm | 221,672* | 0.760 | 0.179 | 12.0% | 63.3 nm | 16.1% | 3.1 s |
+
+\* QEM could not reach the requested face count within its `max_error`.
+
+What this shows:
+
+- **Walls between objects survive:** 73–77% of vertex positions stay shared
+  between labels, as in the fine mesh, against QEM's 16–48%.
+- **The error bound holds**, where QEM's own bound does not hold as measured.
+- **For the same error, remeshing reaches far fewer faces**: 163k against QEM's
+  222k at 40 nm, and 223k against 798k at 20 nm.
+
+What is not good enough yet:
+
+- **Triangle quality at coarse levels.** 6–11% of triangles have an angle under
+  20°. That is better than QEM but far from what isotropic remeshing should
+  give.
+- **Face counts do not fall monotonically** with the allowed length and error:
+  ≤640 nm with ε 80 nm gave more faces (218k) than ≤320 nm with ε 40 nm.
+- **Speed.** 27–32 s, against QEM's 1–3 s. Nothing is optimised yet: the loop
+  allocates in every step and rebuilds its edge list every pass.

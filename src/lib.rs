@@ -7,6 +7,7 @@ pub mod dice;
 pub mod extract;
 pub mod flip;
 pub mod grid;
+pub mod lod;
 pub mod mesh;
 pub mod orient;
 pub mod place;

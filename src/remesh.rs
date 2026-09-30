@@ -462,6 +462,35 @@ impl Remesh {
         self.voxel[v as usize]
     }
 
+    /// Position in physical units.
+    pub fn physical_position(&self, v: u32) -> [f64; 3] {
+        self.physical(self.voxel[v as usize])
+    }
+
+    /// Voxel units from physical ones.
+    pub fn to_voxel(&self, p: [f64; 3]) -> [f64; 3] {
+        [
+            p[0] / self.scale[0],
+            p[1] / self.scale[1],
+            p[2] / self.scale[2],
+        ]
+    }
+
+    /// Live faces around `v`.
+    pub fn faces_around(&self, v: u32) -> &[u32] {
+        &self.incident[v as usize]
+    }
+
+    /// The two labels on face `f`: front, then back or [`OUTSIDE`].
+    pub fn labels(&self, f: u32) -> (u32, u32) {
+        (self.front[f as usize], self.back[f as usize])
+    }
+
+    /// Number of live faces.
+    pub fn live_faces(&self) -> usize {
+        self.face_alive.iter().filter(|&&a| a).count()
+    }
+
     fn physical(&self, p: [f64; 3]) -> [f64; 3] {
         [
             p[0] * self.scale[0],
