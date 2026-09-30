@@ -178,42 +178,72 @@ fn closest_on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     add(a, scale(ab, t))
 }
 
-/// Whether segment `p`-`q` passes through triangle `t`: its ends strictly on
-/// opposite sides of the plane (by more than `tol`), and the crossing point
-/// strictly inside. Touching -- an end on the plane, coplanar overlap -- is not
-/// passing through.
-fn pierces(p: [f64; 3], q: [f64; 3], t: &[[f64; 3]; 3], tol: f64) -> bool {
-    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
-    let l = norm(n);
-    if l == 0.0 {
+/// A triangle's plane: unit normal (zero for a degenerate triangle) and a
+/// point on it, worked out once per triangle rather than once per test.
+#[derive(Clone, Copy)]
+struct Plane {
+    n: [f64; 3],
+    o: [f64; 3],
+}
+
+impl Plane {
+    fn of(t: &[[f64; 3]; 3]) -> Plane {
+        let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+        let l = norm(n);
+        Plane {
+            n: if l > 0.0 { scale(n, 1.0 / l) } else { [0.0; 3] },
+            o: t[0],
+        }
+    }
+
+    #[inline]
+    fn degenerate(&self) -> bool {
+        self.n == [0.0; 3]
+    }
+
+    #[inline]
+    fn height(&self, p: [f64; 3]) -> f64 {
+        dot(self.n, sub(p, self.o))
+    }
+
+    /// Whether `t` lies wholly on one side, touching allowed.
+    fn beside(&self, t: &[[f64; 3]; 3], tol: f64) -> bool {
+        let d = t.map(|p| self.height(p));
+        d.iter().all(|&x| x > -tol) || d.iter().all(|&x| x < tol)
+    }
+}
+
+/// Whether segment `p`-`q` passes through triangle `t`, whose plane is `pl`:
+/// its ends strictly on opposite sides of the plane (by more than `tol`), and
+/// the crossing point strictly inside. Touching -- an end on the plane,
+/// coplanar overlap -- is not passing through.
+fn pierces_plane(p: [f64; 3], q: [f64; 3], t: &[[f64; 3]; 3], pl: &Plane, tol: f64) -> bool {
+    if pl.degenerate() {
         return false;
     }
-    let (dp, dq) = (dot(n, sub(p, t[0])) / l, dot(n, sub(q, t[0])) / l);
+    let (dp, dq) = (pl.height(p), pl.height(q));
     if !((dp > tol && dq < -tol) || (dp < -tol && dq > tol)) {
         return false;
     }
     let x = add(p, scale(sub(q, p), dp / (dp - dq)));
-    (0..3).all(|k| dot(cross(sub(t[(k + 1) % 3], t[k]), sub(x, t[k])), n) > 0.0)
+    (0..3).all(|k| dot(cross(sub(t[(k + 1) % 3], t[k]), sub(x, t[k])), pl.n) > 0.0)
 }
 
 /// Whether two triangles cross: some edge of one passes through the other,
 /// which is how any two non-coplanar triangles that intersect do.
+#[cfg(test)]
 fn crosses(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3], tol: f64) -> bool {
+    crosses_planes(a, &Plane::of(a), b, &Plane::of(b), tol)
+}
+
+/// [`crosses`], with both planes already worked out.
+fn crosses_planes(a: &[[f64; 3]; 3], pa: &Plane, b: &[[f64; 3]; 3], pb: &Plane, tol: f64) -> bool {
     // Wholly on one side of the other's plane: cannot cross.
-    let apart = |s: &[[f64; 3]; 3], t: &[[f64; 3]; 3]| {
-        let n = cross(sub(s[1], s[0]), sub(s[2], s[0]));
-        let l = norm(n);
-        if l == 0.0 {
-            return true;
-        }
-        let d = t.map(|p| dot(n, sub(p, s[0])) / l);
-        d.iter().all(|&x| x > -tol) || d.iter().all(|&x| x < tol)
-    };
-    if apart(a, b) || apart(b, a) {
+    if pa.degenerate() || pb.degenerate() || pa.beside(b, tol) || pb.beside(a, tol) {
         return false;
     }
-    (0..3).any(|k| pierces(a[k], a[(k + 1) % 3], b, tol))
-        || (0..3).any(|k| pierces(b[k], b[(k + 1) % 3], a, tol))
+    (0..3).any(|k| pierces_plane(a[k], a[(k + 1) % 3], b, pb, tol))
+        || (0..3).any(|k| pierces_plane(b[k], b[(k + 1) % 3], a, pa, tol))
 }
 
 fn bounds(t: &[[f64; 3]; 3]) -> ([f64; 3], [f64; 3]) {
@@ -234,22 +264,25 @@ fn widen(sign: f64) -> impl Fn(f64) -> f32 {
     move |x| (x + sign * (1e-6 * x.abs() + 1e-9)) as f32
 }
 
+/// A triangle an operation would make: its vertex ids, corners and wall.
+type NewTri = ([u32; 3], [[f64; 3]; 3], (u32, u32));
+
 /// Coarse faces by where they are: a uniform grid of cells, each listing the
-/// faces whose bounding box touches it. Entries go stale as faces change; a
-/// query checks every candidate against the face as it is now, and the grid
-/// is rebuilt at the start of each pass.
+/// faces whose bounding box has its centre there. A query widens its box by
+/// the largest half-width of any listed face, so each face is looked at once
+/// however many cells it spans.
 #[derive(Default)]
 struct Grid {
     cell: f64,
-    /// Per cell, each face with its bounding box when it was inserted, so a
-    /// query can pass over most entries without looking at the mesh.
+    /// Per cell, each face with its bounding box, so a query can pass over
+    /// most entries without looking at the mesh.
     cells: FxHashMap<[i64; 3], Vec<(u32, [f32; 6])>>,
-    /// Entries in all cells, stale ones included.
-    entries: usize,
-    /// Faces inserted spanning more than a few cells along some axis.
+    /// The largest half-width of any listed face's box along any axis.
+    reach: f64,
+    /// Faces listed spanning more than two cells along some axis.
     oversized: usize,
-    /// Per face, the cells it is listed in, so moving it drops the old entries.
-    span: Vec<Option<([i64; 3], [i64; 3])>>,
+    /// Per face, the cell it is listed in.
+    home: Vec<Option<[i64; 3]>>,
 }
 
 impl Grid {
@@ -257,9 +290,10 @@ impl Grid {
         p.map(|x| (x / self.cell).floor() as i64)
     }
 
+    /// List face `f`, with triangle `t`, in place of wherever it was.
     fn insert(&mut self, f: u32, t: &[[f64; 3]; 3]) {
+        self.remove(f);
         let (lo, hi) = bounds(t);
-        let (a, b) = (self.key(lo), self.key(hi));
         let (down, up) = (widen(-1.0), widen(1.0));
         let bbox = [
             down(lo[0]),
@@ -269,41 +303,37 @@ impl Grid {
             up(hi[1]),
             up(hi[2]),
         ];
-        if (0..3).any(|k| b[k] - a[k] > 2) {
-            self.oversized += 1;
-        }
-        if self.span.len() <= f as usize {
-            self.span.resize(f as usize + 1, None);
-        }
-        if let Some((oa, ob)) = self.span[f as usize].take() {
-            for i in oa[0]..=ob[0] {
-                for j in oa[1]..=ob[1] {
-                    for k in oa[2]..=ob[2] {
-                        if let Some(list) = self.cells.get_mut(&[i, j, k]) {
-                            let before = list.len();
-                            list.retain(|&(g, _)| g != f);
-                            self.entries -= before - list.len();
-                        }
-                    }
-                }
+        let mut centre = [0.0; 3];
+        for k in 0..3 {
+            let half = 0.5 * (hi[k] - lo[k]);
+            centre[k] = lo[k] + half;
+            self.reach = self.reach.max(half);
+            if hi[k] - lo[k] > 2.0 * self.cell {
+                self.oversized += 1;
             }
         }
-        self.span[f as usize] = Some((a, b));
-        for i in a[0]..=b[0] {
-            for j in a[1]..=b[1] {
-                for k in a[2]..=b[2] {
-                    self.cells.entry([i, j, k]).or_default().push((f, bbox));
-                    self.entries += 1;
+        let key = self.key(centre);
+        if self.home.len() <= f as usize {
+            self.home.resize(f as usize + 1, None);
+        }
+        self.home[f as usize] = Some(key);
+        self.cells.entry(key).or_default().push((f, bbox));
+    }
+
+    fn remove(&mut self, f: u32) {
+        if let Some(key) = self.home.get_mut(f as usize).and_then(Option::take) {
+            if let Some(list) = self.cells.get_mut(&key) {
+                if let Some(i) = list.iter().position(|e| e.0 == f) {
+                    list.swap_remove(i);
                 }
             }
         }
     }
 
-    /// Faces whose box when inserted touched the box `lo`-`hi`, possibly
-    /// repeated. A face that has moved since may be missing from its old
-    /// place's list, but is always listed where it is now.
+    /// Faces whose box touches the box `lo`-`hi`, each once.
     fn near(&self, lo: [f64; 3], hi: [f64; 3], out: &mut Vec<u32>) {
-        let (a, b) = (self.key(lo), self.key(hi));
+        let r = self.reach;
+        let (a, b) = (self.key(lo.map(|x| x - r)), self.key(hi.map(|x| x + r)));
         let (l, h) = (lo.map(widen(-1.0)), hi.map(widen(1.0)));
         for i in a[0]..=b[0] {
             for j in a[1]..=b[1] {
@@ -319,6 +349,9 @@ impl Grid {
         }
     }
 }
+
+/// Relaxing moves shorter than this fraction of the target length are skipped.
+const RELAX_MIN: f64 = 0.05;
 
 /// Shape quality of a triangle: 1 equilateral, 0 degenerate.
 fn tri_quality(t: &[[f64; 3]; 3]) -> f64 {
@@ -689,28 +722,29 @@ impl State<'_> {
     }
 
     /// Put the faces around `v` in the grid where they are now, rebuilding it
-    /// once stale entries outnumber live ones a few times over, or once the
-    /// faces have grown well past its cells, as they do while collapsing.
+    /// once the faces have grown well past its cells, as they do while
+    /// collapsing.
     fn reindex(&mut self, v: u32) {
-        for f in self.rm.faces_around(v).to_vec() {
+        for i in 0..self.rm.faces_around(v).len() {
+            let f = self.rm.faces_around(v)[i];
             let t = self.triangle_with(f, None);
             self.grid.insert(f, &t);
         }
-        let n = self.rm.face_count();
-        if self.grid.entries > 3 * n || self.grid.oversized > n / 64 {
+        if self.grid.oversized > self.rm.face_count() / 64 {
             self.rebuild_grid();
         }
     }
 
     /// The live faces, other than `skip`, that some triangle of `tris` (each
     /// with its vertex ids) crosses while sharing no vertex with it; ascending.
-    fn crossed(&self, tris: &[([u32; 3], [[f64; 3]; 3])], skip: &[u32]) -> Vec<u32> {
+    fn crossed(&self, tris: &[NewTri], skip: &[u32]) -> Vec<u32> {
         if tris.is_empty() {
             return Vec::new();
         }
         // One query for the lot: an operation's triangles overlap, and asking
         // for each separately scans the same cells over and over.
-        let boxes: Vec<([f64; 3], [f64; 3])> = tris.iter().map(|(_, t)| bounds(t)).collect();
+        let boxes: Vec<([f64; 3], [f64; 3])> = tris.iter().map(|(_, t, _)| bounds(t)).collect();
+        let planes: Vec<Plane> = tris.iter().map(|(_, t, _)| Plane::of(t)).collect();
         let (mut lo, mut hi) = boxes[0];
         for (l, h) in &boxes[1..] {
             for k in 0..3 {
@@ -744,19 +778,39 @@ impl State<'_> {
             if (0..3).any(|k| ohi[k] < lo[k] || olo[k] > hi[k]) {
                 continue;
             }
-            for ((ids, t), (l, h)) in tris.iter().zip(&boxes) {
+            let mut po: Option<Plane> = None;
+            let wall = self.rm.labels(g);
+            for (((ids, t, labels), (l, h)), pt) in tris.iter().zip(&boxes).zip(&planes) {
                 if (0..3).any(|k| ohi[k] < l[k] || olo[k] > h[k]) {
                     continue;
                 }
-                let shared: Vec<usize> = (0..3).filter(|&k| ids.contains(&gt[k])).collect();
-                let hit = match shared.as_slice() {
-                    [] => crosses(t, &other, self.tol),
+                let (mut shared, mut at) = (0, 0);
+                for (k, w) in gt.iter().enumerate() {
+                    if ids.contains(w) {
+                        shared += 1;
+                        at = k;
+                    }
+                }
+                let po = *po.get_or_insert_with(|| Plane::of(&other));
+                let hit = match shared {
+                    0 => crosses_planes(t, pt, &other, &po, self.tol),
                     // Sharing one vertex, they meet beyond it only if the edge
                     // opposite it on one passes through the other.
-                    &[k] => {
+                    // Neighbours on one wall cannot fold through each other
+                    // without turning a face over, which the orientation
+                    // checks refuse; different walls meeting at a point can.
+                    1 if *labels == wall => false,
+                    1 => {
+                        let k = at;
                         let i = (0..3).find(|&i| ids[i] == gt[k]).unwrap();
-                        pierces(t[(i + 1) % 3], t[(i + 2) % 3], &other, self.tol)
-                            || pierces(other[(k + 1) % 3], other[(k + 2) % 3], t, self.tol)
+                        pierces_plane(t[(i + 1) % 3], t[(i + 2) % 3], &other, &po, self.tol)
+                            || pierces_plane(
+                                other[(k + 1) % 3],
+                                other[(k + 2) % 3],
+                                t,
+                                pt,
+                                self.tol,
+                            )
                     }
                     // Sharing an edge (or all three): only coplanar folds, which
                     // the orientation checks already refuse.
@@ -775,14 +829,20 @@ impl State<'_> {
     /// Whether replacing faces `region` with `after` would cross a face they
     /// do not cross now. Where the fine surface already crossed itself, an
     /// operation may keep or undo a crossing, but never add one elsewhere.
-    fn adds_crossing(&self, region: &[u32], after: &[([u32; 3], [[f64; 3]; 3])]) -> bool {
+    fn adds_crossing(&self, region: &[u32], after: &[NewTri]) -> bool {
         let new = self.crossed(after, region);
         if new.is_empty() {
             return false;
         }
-        let before: Vec<([u32; 3], [[f64; 3]; 3])> = region
+        let before: Vec<NewTri> = region
             .iter()
-            .map(|&f| (self.rm.face(f).unwrap(), self.triangle_with(f, None)))
+            .map(|&f| {
+                (
+                    self.rm.face(f).unwrap(),
+                    self.triangle_with(f, None),
+                    self.rm.labels(f),
+                )
+            })
             .collect();
         let old = self.crossed(&before, region);
         new.iter().any(|g| old.binary_search(g).is_err())
@@ -906,17 +966,41 @@ impl State<'_> {
         };
         let limit = self.params.max_error * self.params.max_error;
         let labels: Vec<(u32, u32)> = faces.iter().map(|&f| self.rm.labels(f)).collect();
+        // Each triangle's plane normal and its squared length: a triangle's
+        // plane is no further than the triangle, so one whose plane is already
+        // further than the best so far need not be measured.
+        let normals: Vec<([f64; 3], f64)> = tris
+            .iter()
+            .map(|t| {
+                let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                (n, dot(n, n))
+            })
+            .collect();
         let mut out = Vec::new();
         for &f in region {
             for &sample in &self.track.on_face[f as usize] {
                 let (fine, label) = self.reference.samples[sample as usize];
                 let p = self.reference.position[fine as usize];
                 // Only this label's triangles count: the bound is on each
-                // label's own surface.
+                // label's own surface. The face the sample is on now first,
+                // since it is usually still the nearest.
+                let current = self.track.face[sample as usize];
+                let first = faces.iter().position(|&g| g == current);
                 let mut best = (f64::INFINITY, u32::MAX);
-                for (i, t) in tris.iter().enumerate() {
+                for i in first
+                    .into_iter()
+                    .chain((0..tris.len()).filter(|&i| Some(i) != first))
+                {
                     if labels[i].0 != label && labels[i].1 != label {
                         continue;
+                    }
+                    let t = &tris[i];
+                    let (n, nn) = normals[i];
+                    if nn > 0.0 {
+                        let h = dot(n, sub(p, t[0]));
+                        if h * h >= best.0 * nn {
+                            continue;
+                        }
                     }
                     let c = closest_on_triangle(p, t[0], t[1], t[2]);
                     let d = sub(c, p);
@@ -954,11 +1038,11 @@ impl State<'_> {
     /// fine curve through them, for a curve vertex.
     fn project(&self, p: [f64; 3], region: &[u32], labels: Option<(u32, u32)>) -> [f64; 3] {
         let mut best = (f64::INFINITY, p);
-        let mut consider = |c: [f64; 3]| {
+        let consider = |best: &mut (f64, [f64; 3]), c: [f64; 3]| {
             let d = sub(c, p);
             let d2 = dot(d, d);
             if d2 < best.0 {
-                best = (d2, c);
+                *best = (d2, c);
             }
         };
         for &f in region {
@@ -969,18 +1053,23 @@ impl State<'_> {
                         for &g in &self.reference.incident[fine as usize] {
                             if self.reference.labels[g as usize] == wall {
                                 let t = self.reference.triangle(g);
-                                consider(closest_on_triangle(p, t[0], t[1], t[2]));
+                                // Its plane already further than the best: skip.
+                                let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                                let h = dot(n, sub(p, t[0]));
+                                if h * h >= best.0 * dot(n, n) && dot(n, n) > 0.0 {
+                                    continue;
+                                }
+                                consider(&mut best, closest_on_triangle(p, t[0], t[1], t[2]));
                             }
                         }
                     }
                     None => {
                         let a = self.reference.position[fine as usize];
                         for &w in &self.reference.curve[fine as usize] {
-                            consider(closest_on_segment(
-                                p,
-                                a,
-                                self.reference.position[w as usize],
-                            ));
+                            consider(
+                                &mut best,
+                                closest_on_segment(p, a, self.reference.position[w as usize]),
+                            );
                         }
                     }
                 }
@@ -1127,12 +1216,12 @@ impl State<'_> {
                 self.counts.refused_for_error += 1;
                 continue;
             };
-            let replaced: Vec<([u32; 3], [[f64; 3]; 3])> = survivors
+            let replaced: Vec<NewTri> = survivors
                 .iter()
                 .zip(&after)
                 .map(|(&f, t)| {
                     let ids = self.rm.face(f).unwrap().map(|w| if w == u { v } else { w });
-                    (ids, *t)
+                    (ids, *t, self.rm.labels(f))
                 })
                 .collect();
             if self.adds_crossing(&region, &replaced) {
@@ -1142,6 +1231,9 @@ impl State<'_> {
             if self.rm.collapse(u, v, self.rm.to_voxel(at)) {
                 self.counts.collapses += 1;
                 self.commit(&region, assignment);
+                for &f in &dying {
+                    self.grid.remove(f);
+                }
                 self.reindex(v);
                 if parted {
                     self.mark_parted(v);
@@ -1219,7 +1311,11 @@ impl State<'_> {
                 self.counts.refused_for_error += 1;
                 continue;
             }
-            if self.adds_crossing(&[fa, fb], &[([p, u, q], tris[0]), ([q, v, p], tris[1])]) {
+            let wall = self.rm.labels(fa);
+            if self.adds_crossing(
+                &[fa, fb],
+                &[([p, u, q], tris[0], wall), ([q, v, p], tris[1], wall)],
+            ) {
                 self.counts.refused_for_crossing += 1;
                 continue;
             }
@@ -1293,6 +1389,19 @@ impl State<'_> {
                 }
                 _ => continue,
             };
+            // A vertex already about where relaxing would put it stays: the
+            // move's checks cost far more than it would gain.
+            let step = norm(sub(target, p));
+            if step
+                < RELAX_MIN
+                    * self
+                        .size
+                        .get(v as usize)
+                        .copied()
+                        .unwrap_or(self.params.max_length)
+            {
+                continue;
+            }
             if self.try_move(v, target) {
                 self.counts.moves += 1;
             }
@@ -1324,10 +1433,10 @@ impl State<'_> {
             self.counts.refused_for_error += 1;
             return false;
         };
-        let moved: Vec<([u32; 3], [[f64; 3]; 3])> = region
+        let moved: Vec<NewTri> = region
             .iter()
             .zip(&after)
-            .map(|(&f, t)| (self.rm.face(f).unwrap(), *t))
+            .map(|(&f, t)| (self.rm.face(f).unwrap(), *t, self.rm.labels(f)))
             .collect();
         if self.adds_crossing(&region, &moved) {
             self.counts.refused_for_crossing += 1;

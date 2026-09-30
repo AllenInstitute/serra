@@ -784,19 +784,35 @@ impl Remesh {
     }
 
     pub fn edge_kind(&self, u: u32, v: u32) -> EdgeKind {
-        let faces = self.edge_faces(u, v);
-        match faces.as_slice() {
-            [_] => EdgeKind::Boundary,
-            &[f, g] => {
-                let same_wall = self.front[f as usize] == self.front[g as usize]
-                    && self.back[f as usize] == self.back[g as usize];
-                if same_wall && self.runs(f, u, v) != self.runs(g, u, v) {
-                    EdgeKind::Wall
-                } else {
-                    EdgeKind::Junction
+        // Asked for every edge of every candidate operation: counted in place
+        // rather than by collecting the faces.
+        let (mut n, mut first, mut second) = (0, u32::MAX, u32::MAX);
+        for &f in &self.incident[u as usize] {
+            if self.faces[f as usize].contains(&v) {
+                match n {
+                    0 => first = f,
+                    1 => second = f,
+                    _ => return EdgeKind::Junction,
                 }
+                n += 1;
             }
+        }
+        match n {
+            1 => EdgeKind::Boundary,
+            2 => self.pair_kind(first, second, u, v),
             _ => EdgeKind::Junction,
+        }
+    }
+
+    /// The kind of edge `(u, v)` whose only two faces are `f` and `g`.
+    #[inline]
+    fn pair_kind(&self, f: u32, g: u32, u: u32, v: u32) -> EdgeKind {
+        let same_wall = self.front[f as usize] == self.front[g as usize]
+            && self.back[f as usize] == self.back[g as usize];
+        if same_wall && self.runs(f, u, v) != self.runs(g, u, v) {
+            EdgeKind::Wall
+        } else {
+            EdgeKind::Junction
         }
     }
 
@@ -827,12 +843,51 @@ impl Remesh {
         if self.fixed[v as usize] {
             return VertexKind::Fixed;
         }
+        // Each neighbour with the faces on the edge to it, in one pass over the
+        // faces around `v`, on the stack; the rare vertex with more neighbours
+        // than that asks edge by edge.
+        const MAX: usize = 48;
+        let mut edges = [(u32::MAX, 0u32, u32::MAX, u32::MAX); MAX];
+        let mut len = 0;
         let mut junction = 0;
-        for w in self.neighbours(v) {
-            match self.edge_kind(v, w) {
-                EdgeKind::Boundary => return VertexKind::Locked,
-                EdgeKind::Junction => junction += 1,
-                EdgeKind::Wall => {}
+        'faces: for &f in &self.incident[v as usize] {
+            for w in self.faces[f as usize] {
+                if w == v {
+                    continue;
+                }
+                if let Some(e) = edges[..len].iter_mut().find(|e| e.0 == w) {
+                    e.1 += 1;
+                    if e.1 == 2 {
+                        e.3 = f;
+                    }
+                } else if len == MAX {
+                    len = usize::MAX;
+                    break 'faces;
+                } else {
+                    edges[len] = (w, 1, f, u32::MAX);
+                    len += 1;
+                }
+            }
+        }
+        if len == usize::MAX {
+            for w in self.neighbours(v) {
+                match self.edge_kind(v, w) {
+                    EdgeKind::Boundary => return VertexKind::Locked,
+                    EdgeKind::Junction => junction += 1,
+                    EdgeKind::Wall => {}
+                }
+            }
+        } else {
+            for &(w, n, f, g) in &edges[..len] {
+                match n {
+                    1 => return VertexKind::Locked,
+                    2 => {
+                        if self.pair_kind(f, g, v, w) == EdgeKind::Junction {
+                            junction += 1;
+                        }
+                    }
+                    _ => junction += 1,
+                }
             }
         }
         match junction {
