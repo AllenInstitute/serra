@@ -47,10 +47,20 @@
 //! material between them has one hole fewer. Pinches, where one label meets
 //! itself, are never separated, so no object's own connectivity changes.
 //!
-//! The two copies are then moved a quarter of `max_error` apart, each into its
-//! own label, and are never projected back onto the fine surface, where they
-//! would coincide again. From there they are remeshed like any other walls:
-//! the check below keeps them from crossing, so they can only move apart.
+//! The two copies are then moved a hair apart (a thousandth of `max_error`),
+//! each into its own label, and are never projected back onto the fine
+//! surface, where they would coincide again. From there they are remeshed
+//! like any other walls: the check below keeps them from crossing, so they can
+//! only move apart.
+//!
+//! Contacts one material does not surround -- where three or more meet round
+//! the patch -- cannot be separated that way, but they need not be: remeshing
+//! brings such a contact down to a single triangle whose edges are all
+//! junction edges, and with the option on ([`Remesh::shrink_contacts`]) it may
+//! go on to an edge and a point, where the two labels then touch. Every
+//! label's own link condition still holds, so no label's surface changes
+//! topology, and the error bound decides whether the contact is small enough
+//! to go.
 //!
 //! # No crossings
 //!
@@ -60,10 +70,12 @@
 //! through each other. So no operation may add a crossing -- a triangle
 //! passing through another that shares no vertex with it. Every split,
 //! collapse, flip and move is checked against the faces near it, found
-//! through a uniform grid, and refused if its triangles would cross more
-//! faces than the ones they replace did. Touching is not crossing, and where
-//! the fine surface already crosses itself, operations there are not all
-//! refused, only kept from making it worse.
+//! through a uniform grid, and refused if its triangles would cross a face the
+//! ones they replace did not. Triangles sharing a vertex count too, if the edge
+//! opposite it on one passes through the other; triangles sharing an edge are
+//! left to the orientation checks. Touching is not crossing, and where the
+//! fine surface already crosses itself, operations there may keep or undo
+//! those crossings but add none.
 //!
 //! Single-threaded and visited in id order, so the result is a pure function of
 //! the input.
@@ -560,6 +572,7 @@ pub fn level(
     } else {
         Vec::new()
     };
+    rm.shrink_contacts(params.drop_small_contacts);
     let reference = Reference::new(&rm);
     let mut counts = run(&mut rm, &reference, params, &separated);
     counts.separated = separated.len();
@@ -689,12 +702,11 @@ impl State<'_> {
         }
     }
 
-    /// How many (triangle, live face) pairs cross, over triangles `tris` (each
-    /// with its vertex ids) and every live face other than `skip` sharing no
-    /// vertex with it.
-    fn crossings(&self, tris: &[([u32; 3], [[f64; 3]; 3])], skip: &[u32]) -> usize {
+    /// The live faces, other than `skip`, that some triangle of `tris` (each
+    /// with its vertex ids) crosses while sharing no vertex with it; ascending.
+    fn crossed(&self, tris: &[([u32; 3], [[f64; 3]; 3])], skip: &[u32]) -> Vec<u32> {
         if tris.is_empty() {
-            return 0;
+            return Vec::new();
         }
         // One query for the lot: an operation's triangles overlap, and asking
         // for each separately scans the same cells over and over.
@@ -718,7 +730,7 @@ impl State<'_> {
             marks.iter_mut().for_each(|m| *m = 0);
             *stamp = 1;
         }
-        let mut n = 0;
+        let mut out = Vec::new();
         for &g in &near {
             if marks[g as usize] == *stamp || skip.contains(&g) {
                 continue;
@@ -733,39 +745,56 @@ impl State<'_> {
                 continue;
             }
             for ((ids, t), (l, h)) in tris.iter().zip(&boxes) {
-                if (0..3).any(|k| ohi[k] < l[k] || olo[k] > h[k])
-                    || gt.iter().any(|w| ids.contains(w))
-                {
+                if (0..3).any(|k| ohi[k] < l[k] || olo[k] > h[k]) {
                     continue;
                 }
-                if crosses(t, &other, self.tol) {
-                    n += 1;
+                let shared: Vec<usize> = (0..3).filter(|&k| ids.contains(&gt[k])).collect();
+                let hit = match shared.as_slice() {
+                    [] => crosses(t, &other, self.tol),
+                    // Sharing one vertex, they meet beyond it only if the edge
+                    // opposite it on one passes through the other.
+                    &[k] => {
+                        let i = (0..3).find(|&i| ids[i] == gt[k]).unwrap();
+                        pierces(t[(i + 1) % 3], t[(i + 2) % 3], &other, self.tol)
+                            || pierces(other[(k + 1) % 3], other[(k + 2) % 3], t, self.tol)
+                    }
+                    // Sharing an edge (or all three): only coplanar folds, which
+                    // the orientation checks already refuse.
+                    _ => false,
+                };
+                if hit {
+                    out.push(g);
+                    break;
                 }
             }
         }
-        n
+        out.sort_unstable();
+        out
     }
 
-    /// Whether replacing faces `region` with `after` would make more crossings
-    /// than there are: no operation may add one, but where the fine surface
-    /// already had some, operations there are not all refused.
+    /// Whether replacing faces `region` with `after` would cross a face they
+    /// do not cross now. Where the fine surface already crossed itself, an
+    /// operation may keep or undo a crossing, but never add one elsewhere.
     fn adds_crossing(&self, region: &[u32], after: &[([u32; 3], [[f64; 3]; 3])]) -> bool {
-        let new = self.crossings(after, region);
-        if new == 0 {
+        let new = self.crossed(after, region);
+        if new.is_empty() {
             return false;
         }
         let before: Vec<([u32; 3], [[f64; 3]; 3])> = region
             .iter()
             .map(|&f| (self.rm.face(f).unwrap(), self.triangle_with(f, None)))
             .collect();
-        new > self.crossings(&before, region)
+        let old = self.crossed(&before, region);
+        new.iter().any(|g| old.binary_search(g).is_err())
     }
 
-    /// Move each separated patch's two copies a quarter of `max_error` apart,
-    /// each into its own label, so the copies no longer coincide and any later
-    /// operation that would push one through the other shows as a crossing.
+    /// Move each separated patch's two copies a hair apart -- a thousandth of
+    /// `max_error`, less where that would turn a triangle over -- each into its
+    /// own label. Left coinciding, one copy could tilt through the other about
+    /// an edge they share the place of without any edge passing through a
+    /// triangle, and the crossing check would not see it; once apart, it does.
     fn part(&mut self, separated: &[Separated]) {
-        let gap = 0.25 * self.params.max_error;
+        let gap = 1e-3 * self.params.max_error;
         self.parted = vec![false; self.rm.vertex_count()];
         for s in separated {
             for &(va, vx) in &s.twins {
@@ -786,7 +815,19 @@ impl State<'_> {
                         n = add(n, if front { fnorm } else { scale(fnorm, -1.0) });
                     }
                     let l = norm(n);
-                    if l > 0.0 && self.try_move(v, sub(self.pos(v), scale(n, gap / l))) {
+                    if l == 0.0 {
+                        continue;
+                    }
+                    let mut d = gap;
+                    let mut moved = false;
+                    for _ in 0..4 {
+                        if self.move_to(v, sub(self.pos(v), scale(n, d / l)), false) {
+                            moved = true;
+                            break;
+                        }
+                        d *= 0.5;
+                    }
+                    if moved {
                         self.counts.moves += 1;
                     }
                 }
@@ -1259,6 +1300,14 @@ impl State<'_> {
     }
 
     fn try_move(&mut self, v: u32, to: [f64; 3]) -> bool {
+        self.move_to(v, to, true)
+    }
+
+    /// Move `v` to `to` if that keeps the bound and adds no crossing, and, with
+    /// `shape`, keeps the triangles acceptable. Parting separated copies skips
+    /// the shape test: the copies are often a few sub-voxel triangles, and
+    /// left coinciding they would hide any later crossing between them.
+    fn move_to(&mut self, v: u32, to: [f64; 3], shape: bool) -> bool {
         let region = self.rm.faces_around(v).to_vec();
         let before: Vec<_> = region
             .iter()
@@ -1268,7 +1317,7 @@ impl State<'_> {
             .iter()
             .map(|&f| self.triangle_with(f, Some((v, v, to))))
             .collect();
-        if !acceptable(&before, &after) {
+        if shape && !acceptable(&before, &after) {
             return false;
         }
         let Some(assignment) = self.fit(&region, &region, Some((v, v, to)), None) else {
@@ -1610,6 +1659,7 @@ mod tests {
             let mut rm = Remesh::new(&walls, &e.cells, [1.0; 3]);
             let done = rm.separate_small_contacts(2.0 * params.max_error);
             separated += done.len();
+            rm.shrink_contacts(true);
             let reference = Reference::new(&rm);
             let before = crossing_pairs(&fine);
             super::run(&mut rm, &reference, &params, &done);
@@ -1698,6 +1748,41 @@ mod tests {
             );
         }
         assert!(refused > 0, "the check never had anything to refuse");
+    }
+
+    /// With the option on, fewer pairs of labels still touch at the coarse
+    /// level; with it off, every pair that touched still does.
+    #[test]
+    fn dropping_small_contacts_drops_some_contacts() {
+        let touching = |rm: &Remesh| -> FxHashSet<(u32, u32)> {
+            (0..rm.face_count() as u32)
+                .filter(|&f| rm.face(f).is_some())
+                .map(|f| rm.labels(f))
+                .filter(|&(_, b)| b != OUTSIDE)
+                .collect()
+        };
+        let (mut kept, mut dropped) = (0, 0);
+        for seed in 0..4 {
+            let a = noisy(22, 8, seed);
+            let e = faired(&a, true);
+            let walls = WallMesh::build(&e).unwrap();
+            let fine = touching(&Remesh::new(&walls, &e.cells, [1.0; 3]));
+            let mut params = LevelParams {
+                max_length: 3.0,
+                min_length: 0.5,
+                max_error: 0.6,
+                iterations: 3,
+                drop_small_contacts: false,
+            };
+            let exact = touching(&level(&walls, &e.cells, [1.0; 3], &params).0);
+            assert_eq!(exact, fine, "seed {seed}");
+            params.drop_small_contacts = true;
+            let loose = touching(&level(&walls, &e.cells, [1.0; 3], &params).0);
+            assert!(loose.is_subset(&fine), "seed {seed}");
+            kept += loose.len();
+            dropped += fine.len() - loose.len();
+        }
+        assert!(dropped > 0, "{kept} pairs kept, none dropped");
     }
 
     #[test]

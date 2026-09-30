@@ -121,6 +121,9 @@ pub struct Remesh {
     /// What label `side` of `face` means by `vertex`, where that is not
     /// `vertex` itself: `(face, vertex, side) -> alias`.
     alias: FxHashMap<(u32, u32, Side), u32>,
+    /// Whether a contact down to its last triangle may shrink to an edge and a
+    /// point; see [`Remesh::shrink_contacts`].
+    shrink: bool,
 }
 
 #[inline]
@@ -202,6 +205,7 @@ impl Remesh {
                 .map(|v| cells.pinned[walls.cells[v] as usize])
                 .collect(),
             alias,
+            shrink: false,
         };
         rm.resolve(&walls.label_suspect, &walls.cells);
         rm.lock();
@@ -1002,6 +1006,28 @@ impl Remesh {
 
     // --- collapse ----------------------------------------------------------
 
+    /// Let a contact that remeshing has brought down to a single triangle --
+    /// a wall patch whose three edges are all junction edges -- collapse
+    /// further, to an edge and then a point: the two labels on it then touch
+    /// only there. Every other rule still holds, each label's own link
+    /// condition among them, so no label's surface changes topology; a patch
+    /// that one material surrounds, which would pinch that material, is
+    /// still refused. Off by default.
+    pub fn shrink_contacts(&mut self, on: bool) {
+        self.shrink = on;
+    }
+
+    /// Whether `u`, `v` and `w` are a live face all of whose edges are
+    /// junction edges.
+    fn lone(&self, u: u32, v: u32, w: u32) -> bool {
+        self.edge_faces(u, v)
+            .into_iter()
+            .any(|f| self.faces[f as usize].contains(&w))
+            && [(u, v), (v, w), (w, u)]
+                .iter()
+                .all(|&(a, b)| self.edge_kind(a, b) == EdgeKind::Junction)
+    }
+
     /// Collapse `u` into `v`, leaving `v` at `to` (voxel units).
     ///
     /// Where `v` may not move -- a wall vertex collapsing onto a curve or a
@@ -1160,10 +1186,14 @@ impl Remesh {
             }
         }
         // A curve must not close up on itself: the curve neighbours of `u`
-        // and `v`, other than each other, must differ.
+        // and `v`, other than each other, must differ. Unless contacts may
+        // shrink and the three are a contact's last triangle.
         if matches!(ku, VertexKind::Curve | VertexKind::Corner) {
             let (cu, cv) = (self.curve_neighbours(u), self.curve_neighbours(v));
-            if cu.iter().any(|w| *w != v && cv.contains(w)) {
+            if cu
+                .iter()
+                .any(|&w| w != v && cv.contains(&w) && !(self.shrink && self.lone(u, v, w)))
+            {
                 return false;
             }
         }
