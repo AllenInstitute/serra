@@ -22,17 +22,22 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tangential import triangle_quality  # noqa: E402
-
 import serra_mesh  # noqa: E402
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 
 
-def degree6(faces, n):
-    """Fraction of vertices with exactly six neighbours, on closed meshes."""
-    deg = np.bincount(faces.ravel(), minlength=n)
-    return (deg == 6).mean()
+def per_face(vertices, faces):
+    """Area, shape quality and smallest angle (degrees) of every triangle."""
+    p = vertices[faces].astype(np.float64)
+    e = [p[:, 1] - p[:, 0], p[:, 2] - p[:, 1], p[:, 0] - p[:, 2]]
+    area = 0.5 * np.linalg.norm(np.cross(e[0], -e[2]), axis=1)
+    l2 = np.stack([(x * x).sum(1) for x in e], axis=1)
+    q = 4.0 * np.sqrt(3.0) * area / np.maximum(l2.sum(1), 1e-30)
+    side = np.sort(np.sqrt(l2), axis=1)
+    sin_min = 2.0 * area / np.maximum(side[:, 1] * side[:, 2], 1e-30)
+    theta = np.degrees(np.arcsin(np.clip(sin_min, 0, 1)))
+    return area, q, theta
 
 
 CONFIGS = [
@@ -50,21 +55,35 @@ CONFIGS = [
 
 
 def measure(mesher, labels):
-    vs, fs, n6, total = [], [], 0.0, 0
-    offset = 0
-    start = time.perf_counter()
-    meshes = [mesher.get(int(label)) for label in labels]
-    elapsed = time.perf_counter() - start
-    for m in meshes:
+    """Pooled statistics over every triangle of `labels`, accumulated one object
+    at a time: holding a whole chunk's triangles in float64 at once needs
+    several GB."""
+    n = s1 = s2 = thin = 0.0
+    qs, n6, nv, elapsed = [], 0, 0, 0.0
+    for label in labels:
+        start = time.perf_counter()
+        m = mesher.get(int(label))
+        elapsed += time.perf_counter() - start
         if len(m.faces) == 0:
             continue
-        vs.append(m.vertices)
-        fs.append(m.faces + offset)
-        n6 += degree6(m.faces, len(m.vertices)) * len(m.vertices)
-        total += len(m.vertices)
-        offset += len(m.vertices)
-    stats = triangle_quality(np.concatenate(vs), np.concatenate(fs))
-    stats["deg6"] = n6 / total
+        area, q, theta = per_face(m.vertices, m.faces)
+        n += len(area)
+        s1 += area.sum()
+        s2 += (area * area).sum()
+        thin += (theta < 20).sum()
+        qs.append(q.astype(np.float32))
+        deg = np.bincount(m.faces.ravel(), minlength=len(m.vertices))
+        n6 += int((deg == 6).sum())
+        nv += len(m.vertices)
+    mean = s1 / n
+    q = np.concatenate(qs)
+    stats = {
+        "area_cv": np.sqrt(max(s2 / n - mean * mean, 0.0)) / mean,
+        "q_mean": float(q.mean()),
+        "q_p1": float(np.percentile(q, 1)),
+        "lt20": thin / n,
+        "deg6": n6 / nv,
+    }
     return stats, elapsed
 
 
