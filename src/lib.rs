@@ -5,6 +5,7 @@
 
 pub mod dice;
 pub mod extract;
+pub mod flip;
 pub mod grid;
 pub mod mesh;
 pub mod orient;

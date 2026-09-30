@@ -89,6 +89,16 @@ class Mesher:
         put. The step is ``fairing_step``, and ``max_deviation`` still bounds
         every vertex. Can be used with ``fairing=0`` to improve triangles
         without smoothing at all. See ``bench/tangential.py``.
+    edge_flips:
+        Passes of edge flipping when :meth:`get` triangulates a surface. An edge
+        is swapped for the other diagonal of its two triangles when that makes
+        the worse triangle better, fixing thin triangles that choosing each
+        quad's diagonal on its own cannot. No vertex moves, so volume, seams and
+        ``max_deviation`` are untouched. Only edges inside a single wall between
+        two labels are flipped, and both labels' copies of that wall flip
+        identically, so touching objects still share their walls exactly when
+        ``fairing`` is used (or no smoothing at all). Stops early once a pass
+        changes nothing. See ``bench/flips.py``.
     taubin_lambda:
         The positive step, in (0, 1). The negative step follows from this and
         ``taubin_pass_band``; a pass band too wide for the chosen lambda is
@@ -150,6 +160,7 @@ class Mesher:
         fairing_pass_band: float = 0.1,
         fairing_lambda: float = 0.63,
         fairing_tangential: int = 0,
+        edge_flips: int = 0,
         threads: int = 0,
     ):
         self.voxel_resolution = np.asarray(voxel_resolution, dtype=np.float64)
@@ -168,6 +179,7 @@ class Mesher:
         self.fairing_pass_band = float(fairing_pass_band)
         self.fairing_lambda = float(fairing_lambda)
         self.fairing_tangential = int(fairing_tangential)
+        self.edge_flips = int(edge_flips)
         self.threads = int(threads)
         if self.relaxation < 0:
             raise ValueError("relaxation must be non-negative")
@@ -177,6 +189,8 @@ class Mesher:
             raise ValueError("fairing must be non-negative")
         if self.fairing_tangential < 0:
             raise ValueError("fairing_tangential must be non-negative")
+        if self.edge_flips < 0:
+            raise ValueError("edge_flips must be non-negative")
         if self.threads < 0:
             raise ValueError("threads must be non-negative (0 means all cores)")
         self._inner = _serra_mesh.Mesher(
@@ -196,6 +210,7 @@ class Mesher:
             fairing_pass_band=self.fairing_pass_band,
             fairing_lambda=self.fairing_lambda,
             fairing_tangential=self.fairing_tangential,
+            edge_flips=self.edge_flips,
             threads=self.threads,
         )
 

@@ -334,6 +334,60 @@ pub static SURFACE_FACES: [u8; 1 << NEDGES] = build_face_mask(2);
 /// rather than being dragged off it by the ordinary walls that also meet there.
 pub static JUNCTION_FACES: [u8; 1 << NEDGES] = build_face_mask(3);
 
+/// Cells whose vertex lies on a single wall between two labels, indexed by the
+/// 12-bit crossing mask.
+///
+/// That is: no junction face, and the corners fall into exactly two regions
+/// joined by uncrossed edges. The second condition is not implied by the first.
+/// Two isolated corners of different labels at opposite ends of a body diagonal
+/// share no face, so no face sees three labels, yet the cell holds three.
+///
+/// Stated on the crossing mask, so it is a property of the cell rather than of
+/// any one label's view of it. Edge flipping relies on that: both labels on a
+/// wall must agree on which of its vertices are interior to it.
+pub static SHEET_CELL: [bool; 1 << NEDGES] = build_sheet_cell();
+
+const fn build_sheet_cell() -> [bool; 1 << NEDGES] {
+    let mut out = [false; 1 << NEDGES];
+    let mut mask = 0usize;
+    while mask < (1 << NEDGES) {
+        if JUNCTION_FACES[mask] == 0 && mask != 0 {
+            // Label the corners by flood fill across uncrossed edges.
+            let mut region = [u8::MAX; NCORNERS];
+            let mut regions = 0u8;
+            let mut seed = 0;
+            while seed < NCORNERS {
+                if region[seed] == u8::MAX {
+                    region[seed] = regions;
+                    // Relax to a fixed point; eight corners need at most seven
+                    // rounds.
+                    let mut round = 0;
+                    while round < NCORNERS {
+                        let mut e = 0;
+                        while e < NEDGES {
+                            let (a, b) = (EDGES[e].0 as usize, EDGES[e].1 as usize);
+                            if mask & (1 << e) == 0 {
+                                if region[a] == regions && region[b] == u8::MAX {
+                                    region[b] = regions;
+                                } else if region[b] == regions && region[a] == u8::MAX {
+                                    region[a] = regions;
+                                }
+                            }
+                            e += 1;
+                        }
+                        round += 1;
+                    }
+                    regions += 1;
+                }
+                seed += 1;
+            }
+            out[mask] = regions == 2;
+        }
+        mask += 1;
+    }
+    out
+}
+
 /// Bit `f` set when face `f` has at least `threshold` of its four perimeter
 /// edges crossing.
 ///
@@ -759,6 +813,44 @@ mod face_kind_tests {
         // crossings" can be told apart by a threshold of 2.
         assert_eq!(seen[1], 0, "a face with exactly one crossing occurred");
         assert!(seen[0] > 0 && seen[2] > 0 && seen[3] > 0 && seen[4] > 0);
+    }
+
+    /// A sheet cell holds exactly two labels, each with a single sheet there.
+    ///
+    /// So every quad around its vertex is part of one wall between the same two
+    /// labels, in both labels' meshes, which is what lets edge flipping treat
+    /// such a vertex as interior to a single wall — see [`crate::flip`].
+    #[test]
+    fn a_sheet_cell_is_one_wall_between_two_labels() {
+        let mut sheets = 0;
+        each_partition(|corners| {
+            let mask = crossings_of(corners);
+            if !SHEET_CELL[mask] {
+                return;
+            }
+            sheets += 1;
+            let labels: Vec<u32> = (0..NCORNERS as u32)
+                .filter(|l| corners.contains(l))
+                .collect();
+            assert_eq!(labels.len(), 2, "corners {corners:?}");
+            for &l in &labels {
+                let bits = (0..NCORNERS)
+                    .filter(|&c| corners[c] == l)
+                    .fold(0usize, |m, c| m | 1 << c);
+                assert_eq!(SURFACE.sheets[bits], 1, "corners {corners:?}");
+            }
+        });
+        assert!(sheets > 0);
+    }
+
+    /// No junction face is not enough on its own: two isolated corners of
+    /// different labels at opposite ends of a body diagonal meet no common face.
+    #[test]
+    fn no_junction_face_can_still_mean_three_labels() {
+        let corners = [0, 0, 0, 1, 2, 0, 0, 0];
+        let mask = crossings_of(&corners);
+        assert_eq!(JUNCTION_FACES[mask], 0);
+        assert!(!SHEET_CELL[mask]);
     }
 
     #[test]

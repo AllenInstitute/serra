@@ -18,7 +18,7 @@ use rayon::prelude::*;
 use crate::dice::{dice as dice_mesh, DiceOptions};
 use crate::extract::{extract_parallel, ExtractOptions, Extraction};
 use crate::grid::{Label, VolumeView};
-use crate::mesh::{build, MeshOptions, TriangleMesh};
+use crate::mesh::{build_with, MeshOptions, TriangleMesh};
 use crate::orient::Layout;
 use crate::simplify::{simplify, SimplifyOptions};
 use crate::smooth::{fair, scatter, smooth_with, Fairing, Relaxation, Scratch, Smoothing, Taubin};
@@ -36,6 +36,8 @@ pub struct Mesher {
     resolution: [f64; 3],
     layout: Layout,
     smoothing: Smoothing,
+    /// Passes of edge flipping in `get`; see [`crate::flip`].
+    edge_flips: u32,
     threads: usize,
     /// A private pool, so a thread count set here cannot be overridden by
     /// RAYON_NUM_THREADS and cannot disturb other rayon users in the process.
@@ -45,11 +47,13 @@ pub struct Mesher {
     extraction: Option<Extraction>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run<'py, T: Label + numpy::Element>(
     py: Python<'py>,
     array: PyReadonlyArray3<'py, T>,
     close: bool,
     smoothing: Smoothing,
+    edge_flips: u32,
     threads: usize,
     pool: Option<&rayon::ThreadPool>,
     owned_cells: Option<[usize; 3]>,
@@ -61,9 +65,11 @@ fn run<'py, T: Label + numpy::Element>(
     // Smoothing must not move vertices whose one-ring the chunk does not
     // fully contain, so the outermost layer of cells is pinned. With `close`
     // there is nothing beyond that layer to be missing, so nothing is pinned
-    // and the whole surface is free to smooth.
+    // and the whole surface is free to smooth. Edge flipping needs the same
+    // layer held, so that a neighbouring chunk's copy of it agrees.
     let options = ExtractOptions {
-        mark_boundary: smoothing.is_active() && (!close || owned_cells.is_some()),
+        mark_boundary: (smoothing.is_active() || edge_flips > 0)
+            && (!close || owned_cells.is_some()),
         owned_cells,
     };
 
@@ -141,6 +147,7 @@ impl Mesher {
         fairing_pass_band=0.1,
         fairing_lambda=0.63,
         fairing_tangential=0,
+        edge_flips=0,
         threads=0,
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -161,6 +168,7 @@ impl Mesher {
         fairing_pass_band: f64,
         fairing_lambda: f64,
         fairing_tangential: u32,
+        edge_flips: u32,
         threads: usize,
     ) -> PyResult<Self> {
         if voxel_resolution.len() != 3 {
@@ -264,6 +272,7 @@ impl Mesher {
             threads,
             pool,
             smoothing,
+            edge_flips,
             shape: [0; 3],
             extraction: None,
         })
@@ -305,6 +314,7 @@ impl Mesher {
                         array,
                         close,
                         self.smoothing,
+                        self.edge_flips,
                         self.threads,
                         self.pool.as_deref(),
                         owned_cells,
@@ -369,6 +379,7 @@ impl Mesher {
             layout: self.layout,
             shape: self.shape,
             normals,
+            flips: self.edge_flips,
         };
         // Following zmesh: max_error defaults to one voxel of the coarsest axis.
         let max_error =
@@ -378,7 +389,7 @@ impl Mesher {
         }
 
         let built = py.detach(move || {
-            let mut mesh = build(raw, &options);
+            let mut mesh = build_with(raw, Some(&extraction.cells), &options);
             if reduction_factor > 1 {
                 let target = mesh.faces.len() / reduction_factor as usize;
                 simplify(

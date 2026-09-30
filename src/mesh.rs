@@ -3,9 +3,10 @@
 //! This is where fixed-point index coordinates become physical floating-point
 //! ones, quads become triangles, and axis order is applied.
 
-use crate::extract::LabelMesh;
+use crate::extract::{CellField, LabelMesh};
+use crate::flip::{flip_edges, Vertices};
 use crate::orient::Layout;
-use crate::tables::SUBVOXEL;
+use crate::tables::{FACE_EDGES, SHEET_CELL, SUBVOXEL};
 
 /// A triangle mesh in physical coordinates.
 #[derive(Default, Clone)]
@@ -32,6 +33,9 @@ pub struct MeshOptions {
     pub shape: [usize; 3],
     /// Whether to compute per-vertex normals.
     pub normals: bool,
+    /// Passes of edge flipping after triangulation; see [`crate::flip`]. Needs
+    /// the cell field, so only [`build_with`] honours it.
+    pub flips: u32,
 }
 
 impl Default for MeshOptions {
@@ -41,6 +45,7 @@ impl Default for MeshOptions {
             layout: Layout::default(),
             shape: [0; 3],
             normals: false,
+            flips: 0,
         }
     }
 }
@@ -80,6 +85,20 @@ fn split_along_first_diagonal(p: [&[i32; 3]; 4]) -> bool {
 /// Vertices that no quad references — which happens where the surface was left
 /// open at the volume boundary — are dropped.
 pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
+    build_with(raw, None, opts)
+}
+
+/// Whether any face of a cell has all four edges crossing: two labels on
+/// opposite diagonals, the configuration the manifold repair below exists for.
+fn has_ambiguous_face(crossings: u16) -> bool {
+    FACE_EDGES
+        .iter()
+        .any(|face| face.iter().all(|&e| crossings & (1 << e) != 0))
+}
+
+/// [`build`], with the cell field the surface came from, which edge flipping
+/// needs to know which vertices lie inside a single wall.
+pub fn build_with(raw: &LabelMesh, cells: Option<&CellField>, opts: &MeshOptions) -> TriangleMesh {
     if raw.quads.is_empty() {
         return TriangleMesh::default();
     }
@@ -100,6 +119,30 @@ pub fn build(raw: &LabelMesh, opts: &MeshOptions) -> TriangleMesh {
             faces.push([q[1], q[2], q[3]]);
             faces.push([q[1], q[3], q[0]]);
         }
+    }
+
+    // --- flip edges, on the raw vertices so every label sees the same ids ---
+    if let (Some(cells), true) = (cells, opts.flips > 0) {
+        let scale = SUBVOXEL as f64;
+        let position: Vec<[f64; 3]> = raw
+            .positions
+            .iter()
+            .map(|p| std::array::from_fn(|k| p[k] as f64 / scale * opts.resolution[k]))
+            .collect();
+        let crossings = |v: usize| cells.crossings[raw.cells[v] as usize];
+        let sheet: Vec<bool> = (0..raw.positions.len())
+            .map(|v| SHEET_CELL[crossings(v) as usize])
+            .collect();
+        let frozen: Vec<bool> = (0..raw.positions.len())
+            .map(|v| cells.pinned[raw.cells[v] as usize] || has_ambiguous_face(crossings(v)))
+            .collect();
+        let verts = Vertices {
+            position: &position,
+            key: &raw.cells,
+            sheet: &sheet,
+            frozen: &frozen,
+        };
+        flip_edges(&mut faces, &verts, opts.flips);
     }
 
     // --- drop unreferenced vertices, preserving order ------------------------
