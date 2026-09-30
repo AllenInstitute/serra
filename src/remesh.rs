@@ -23,16 +23,31 @@
 //!   two junction edges), may move along its curve and collapse along it;
 //! * a **corner**, where curves meet or end, never moves and is never
 //!   collapsed away, though neighbours may collapse into it;
-//! * a **locked** vertex keeps not only its position but every triangle around
-//!   it exactly as it is: no operation may create, destroy or rewire a triangle
-//!   touching it.
+//! * a **fixed** vertex is one that different labels see as different numbers
+//!   of vertices (below). It never moves and nothing collapses into it, but
+//!   the triangles around it may change;
+//! * a **locked** vertex keeps every triangle around it exactly as it is: the
+//!   chunk's outer cell layer, so neighbouring chunks still agree about
+//!   everything near their seam, and any label's open rim at the volume's
+//!   boundary.
 //!
-//! Locked are: vertices the manifold repair may split (from a cell with an
-//! ambiguous face, or a [`WallMesh::pinch`]), whose triangles it must see
-//! unchanged; vertices on the chunk's outer cell layer, so that neighbouring
-//! chunks still agree about everything near their seam; and vertices on any
-//! label's open edge at the volume's boundary. Locking is conservative. It is the simplest rule under
-//! which each of those still holds, and it can be relaxed case by case later.
+//! # One point, several vertices
+//!
+//! At a cell with an ambiguous face, one label's triangles can form two fans
+//! meeting at a point, and extraction's manifold repair gives that label two
+//! vertices there. Where the labels agree, [`Remesh::new`] makes the split
+//! itself, once, in the shared mesh. Where they do not -- one label needs two
+//! vertices where another, whose single fan touches both, needs one -- no
+//! split can serve both. The shared vertex is then kept, and each extra fan of
+//! the label that needs it gets an *alias*: a vertex at the same place, which
+//! that label's triangles there refer to instead. [`WallMesh::pinch`] groups
+//! are the same situation, found while building, and handled the same way.
+//!
+//! So every label's identities are explicit, the repair never has to run on a
+//! remeshed surface, and a vertex with aliases is merely fixed rather than
+//! frozen with everything around it. Aliases are keyed by face, vertex and
+//! side, so they survive operations that reorder a triangle's corners, and
+//! each operation carries them onto the triangles it creates.
 //!
 //! # Coordinates
 //!
@@ -45,7 +60,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::extract::CellField;
 use crate::mesh::{finish, fixed_to_voxel, MeshOptions, TriangleMesh};
-use crate::tables::AMBIGUOUS_CELL;
 use crate::walls::{WallMesh, OUTSIDE};
 
 /// What an edge is, from the triangles on it.
@@ -63,10 +77,14 @@ pub enum EdgeKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VertexKind {
     Locked,
+    Fixed,
     Wall,
     Curve,
     Corner,
 }
+
+/// Which side of a face a label is on: 0 the front, 1 the back.
+type Side = u8;
 
 /// A [`WallMesh`] that can be edited.
 pub struct Remesh {
@@ -81,15 +99,14 @@ pub struct Remesh {
     /// Live faces around each vertex.
     incident: Vec<Vec<u32>>,
     vertex_alive: Vec<bool>,
+    /// No triangle around a locked vertex may change.
     locked: Vec<bool>,
-    /// Handed to the manifold repair when a label is extracted.
-    suspect: Vec<bool>,
+    /// A fixed vertex never moves and nothing collapses into it.
+    fixed: Vec<bool>,
     pinned: Vec<bool>,
-    /// Orders the repair; new vertices take a neighbour's, which is never
-    /// consulted since they are never suspects.
-    cell: Vec<u32>,
-    pinch: Vec<bool>,
-    alias: FxHashMap<u64, u32>,
+    /// What label `side` of `face` means by `vertex`, where that is not
+    /// `vertex` itself: `(face, vertex, side) -> alias`.
+    alias: FxHashMap<(u32, u32, Side), u32>,
 }
 
 #[inline]
@@ -115,6 +132,28 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 /// operation is refused as making it degenerate.
 const MIN_AREA_RATIO: f64 = 1e-6;
 
+/// Disjoint sets over small local indices.
+struct Sets(Vec<usize>);
+
+impl Sets {
+    fn new(n: usize) -> Self {
+        Sets((0..n).collect())
+    }
+    fn find(&mut self, mut x: usize) -> usize {
+        while self.0[x] != x {
+            self.0[x] = self.0[self.0[x]];
+            x = self.0[x];
+        }
+        x
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b {
+            self.0[a.max(b)] = a.min(b);
+        }
+    }
+}
+
 impl Remesh {
     /// Take a wall mesh for editing. `resolution` is the physical voxel size
     /// along each array axis, the space in which shapes are judged.
@@ -126,50 +165,15 @@ impl Remesh {
                 incident[v as usize].push(f as u32);
             }
         }
-        let suspect: Vec<bool> = (0..n)
-            .map(|v| {
-                walls.pinch[v] || AMBIGUOUS_CELL[cells.crossings[walls.cells[v] as usize] as usize]
-            })
-            .collect();
-        let pinned: Vec<bool> = (0..n)
-            .map(|v| cells.pinned[walls.cells[v] as usize])
-            .collect();
-
-        // Vertices on any label's open rim: an edge with only one of that
-        // label's faces. Asked per label, not of the whole mesh: where a label's
-        // surface ends at the volume's edge, other labels' walls can still meet
-        // along the same edge, and the whole mesh shows no rim there.
-        let mut edges: Vec<(u32, u64)> = Vec::with_capacity(walls.faces.len() * 6);
-        for (f, t) in walls.faces.iter().enumerate() {
-            for label in [walls.front[f], walls.back[f]] {
-                if label == OUTSIDE {
-                    continue;
-                }
-                for k in 0..3 {
-                    let (a, b) = (t[k], t[(k + 1) % 3]);
-                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                    edges.push((label, ((lo as u64) << 32) | hi as u64));
-                }
-            }
+        // Re-key the pinch aliases by vertex instead of corner.
+        let mut alias = FxHashMap::default();
+        for (&key, &a) in &walls.alias {
+            let side = (key % 2) as Side;
+            let (face, corner) = ((key / 2) / 3, (key / 2) % 3);
+            let v = walls.faces[face as usize][corner as usize];
+            alias.insert((face as u32, v, side), a);
         }
-        edges.sort_unstable();
-        let mut rim = vec![false; n];
-        let mut i = 0;
-        while i < edges.len() {
-            let mut j = i + 1;
-            while j < edges.len() && edges[j] == edges[i] {
-                j += 1;
-            }
-            if j - i == 1 {
-                let e = edges[i].1;
-                rim[(e >> 32) as usize] = true;
-                rim[(e & 0xffff_ffff) as usize] = true;
-            }
-            i = j;
-        }
-
-        let locked = (0..n).map(|v| suspect[v] || pinned[v] || rim[v]).collect();
-        Remesh {
+        let mut rm = Remesh {
             voxel: walls.positions.iter().map(|&p| fixed_to_voxel(p)).collect(),
             scale: resolution,
             faces: walls.faces.clone(),
@@ -178,13 +182,256 @@ impl Remesh {
             face_alive: vec![true; walls.faces.len()],
             incident,
             vertex_alive: vec![true; n],
-            locked,
-            suspect,
-            pinned,
-            cell: walls.cells.clone(),
-            pinch: walls.pinch.clone(),
-            alias: walls.alias.clone(),
+            locked: Vec::new(),
+            fixed: walls.pinch.clone(),
+            pinned: (0..n)
+                .map(|v| cells.pinned[walls.cells[v] as usize])
+                .collect(),
+            alias,
+        };
+        rm.resolve(&walls.label_suspect, &walls.cells);
+        rm.lock();
+        rm
+    }
+
+    /// What label `side` of face `f` means by vertex `v`.
+    #[inline]
+    fn identity(&self, f: u32, v: u32, side: Side) -> u32 {
+        if self.fixed[v as usize] {
+            self.alias.get(&(f, v, side)).copied().unwrap_or(v)
+        } else {
+            v
         }
+    }
+
+    /// Which side of face `f` label `l` is on, if either.
+    #[inline]
+    fn side_of(&self, f: u32, l: u32) -> Option<Side> {
+        if self.front[f as usize] == l {
+            Some(0)
+        } else if self.back[f as usize] == l {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
+    /// A vertex at the same place as `v`, with no faces of its own, for a label
+    /// that needs another vertex there.
+    fn new_alias(&mut self, v: u32) -> u32 {
+        let a = self.voxel.len() as u32;
+        self.voxel.push(self.voxel[v as usize]);
+        self.incident.push(Vec::new());
+        self.vertex_alive.push(true);
+        self.fixed.push(true);
+        self.pinned.push(self.pinned[v as usize]);
+        a
+    }
+
+    /// Do each label's manifold repair once, up front; see the module docs.
+    ///
+    /// In order of cell, as the repair goes: splitting one vertex changes the
+    /// edges its neighbours see, and fans are found from each label's own view
+    /// of its neighbours, so each label's sequence of splits is the one its own
+    /// repair would make.
+    fn resolve(&mut self, label_suspect: &[(u32, u32)], cells: &[u32]) {
+        let mut order: Vec<u32> = label_suspect.iter().map(|&(v, _)| v).collect();
+        order.sort_unstable_by_key(|&v| (cells[v as usize], v));
+        order.dedup();
+        for s in order {
+            let lo = label_suspect.partition_point(|&(v, _)| v < s);
+            let hi = label_suspect.partition_point(|&(v, _)| v <= s);
+            let suspects: Vec<u32> = label_suspect[lo..hi].iter().map(|&(_, l)| l).collect();
+            self.resolve_one(s, &suspects);
+        }
+    }
+
+    fn resolve_one(&mut self, s: u32, suspect_labels: &[u32]) {
+        let faces = self.incident[s as usize].clone();
+        if faces.is_empty() {
+            return;
+        }
+        let mut labels: Vec<u32> = faces
+            .iter()
+            .flat_map(|&f| [self.front[f as usize], self.back[f as usize]])
+            .filter(|&l| l != OUTSIDE)
+            .collect();
+        labels.sort_unstable();
+        labels.dedup();
+
+        // Each label's fans at `s`, as lists of local face indices. Faces the
+        // label already sees through different identities of `s` are never in
+        // one fan; for a label its repair would split here, fans are further
+        // divided the repair's way, joined only across an edge exactly two of
+        // the label's faces use.
+        let mut merged = Sets::new(faces.len());
+        let mut fans_of: Vec<(u32, Vec<Vec<usize>>)> = Vec::with_capacity(labels.len());
+        for &l in &labels {
+            let mine: Vec<(usize, Side)> = (0..faces.len())
+                .filter_map(|i| self.side_of(faces[i], l).map(|side| (i, side)))
+                .collect();
+            let mut fan = Sets::new(faces.len());
+            // Same identity of `s`: provisionally one fan...
+            let mut by_identity: FxHashMap<u32, usize> = FxHashMap::default();
+            for &(i, side) in &mine {
+                let id = self.identity(faces[i], s, side);
+                let first = *by_identity.entry(id).or_insert(i);
+                if !suspect_labels.contains(&l) {
+                    fan.union(first, i);
+                }
+            }
+            if suspect_labels.contains(&l) {
+                // ...divided by the repair's rule.
+                let mut users: FxHashMap<(u32, u32), Vec<usize>> = FxHashMap::default();
+                for &(i, side) in &mine {
+                    let f = faces[i];
+                    let id = self.identity(f, s, side);
+                    for w in self.faces[f as usize] {
+                        if w != s {
+                            users
+                                .entry((id, self.identity(f, w, side)))
+                                .or_default()
+                                .push(i);
+                        }
+                    }
+                }
+                for list in users.values() {
+                    if list.len() == 2 {
+                        fan.union(list[0], list[1]);
+                    }
+                }
+            }
+            let mut groups: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+            for &(i, _) in &mine {
+                groups.entry(fan.find(i)).or_default().push(i);
+            }
+            let mut groups: Vec<Vec<usize>> = groups.into_values().collect();
+            groups.sort_unstable();
+            for g in &groups {
+                for &i in &g[1..] {
+                    merged.union(g[0], i);
+                }
+            }
+            fans_of.push((l, groups));
+        }
+
+        let consistent = fans_of.iter().all(|(_, groups)| {
+            let mut roots: Vec<usize> = groups.iter().map(|g| merged.find(g[0])).collect();
+            roots.sort_unstable();
+            roots.dedup();
+            roots.len() == groups.len()
+        });
+        let has_alias = self.fixed[s as usize];
+
+        if consistent && !has_alias {
+            // Every label agrees: one real vertex per merged group.
+            let first = merged.find(0);
+            let mut copy_of: FxHashMap<usize, u32> = FxHashMap::default();
+            for (i, &f) in faces.iter().enumerate() {
+                let root = merged.find(i);
+                if root == first {
+                    continue;
+                }
+                let target = *copy_of.entry(root).or_insert_with(|| {
+                    let v = self.voxel.len() as u32;
+                    self.voxel.push(self.voxel[s as usize]);
+                    self.incident.push(Vec::new());
+                    self.vertex_alive.push(true);
+                    self.fixed.push(false);
+                    self.pinned.push(self.pinned[s as usize]);
+                    v
+                });
+                for slot in self.faces[f as usize].iter_mut() {
+                    if *slot == s {
+                        *slot = target;
+                    }
+                }
+                self.incident[s as usize].retain(|&g| g != f);
+                self.incident[target as usize].push(f);
+            }
+            return;
+        }
+
+        // They do not: keep `s`, and give each label's extra fans aliases. A
+        // fan keeps the identity its first face already has, unless an earlier
+        // fan of the same label has claimed it.
+        for (l, groups) in fans_of {
+            let mut claimed: FxHashSet<u32> = FxHashSet::default();
+            for g in groups {
+                let f0 = faces[g[0]];
+                let side = self.side_of(f0, l).unwrap();
+                let current = self.identity(f0, s, side);
+                let id = if claimed.insert(current) {
+                    current
+                } else {
+                    let a = self.new_alias(s);
+                    claimed.insert(a);
+                    a
+                };
+                for &i in &g {
+                    let f = faces[i];
+                    let side = self.side_of(f, l).unwrap();
+                    if id == s {
+                        self.alias.remove(&(f, s, side));
+                    } else {
+                        self.alias.insert((f, s, side), id);
+                    }
+                }
+            }
+        }
+        self.fixed[s as usize] = true;
+    }
+
+    /// Work out which vertices are locked; see the module docs.
+    fn lock(&mut self) {
+        let n = self.voxel.len();
+        // Vertices on any label's open rim: an edge with only one of that
+        // label's faces, counted with the label's own identities. Asked per
+        // label, not of the whole mesh: where a label's surface ends at the
+        // volume's edge, other labels' walls can still meet along the same
+        // edge, and the whole mesh shows no rim there.
+        let mut edges: Vec<(u32, u32, u32)> = Vec::with_capacity(self.faces.len() * 6);
+        for (f, t) in self.faces.iter().enumerate() {
+            if !self.face_alive[f] {
+                continue;
+            }
+            for (side, label) in [(0, self.front[f]), (1, self.back[f])] {
+                if label == OUTSIDE {
+                    continue;
+                }
+                for k in 0..3 {
+                    let (a, b) = (t[k], t[(k + 1) % 3]);
+                    let (ia, ib) = (
+                        self.identity(f as u32, a, side),
+                        self.identity(f as u32, b, side),
+                    );
+                    edges.push((label, ia.min(ib), ia.max(ib)));
+                }
+            }
+        }
+        edges.sort_unstable();
+        let mut rim = vec![false; n];
+        // Identities map back to their shared vertex through the faces; mark
+        // both the identity and, below, the vertices of faces touching it.
+        let mut i = 0;
+        while i < edges.len() {
+            let mut j = i + 1;
+            while j < edges.len() && edges[j] == edges[i] {
+                j += 1;
+            }
+            if j - i == 1 {
+                rim[edges[i].1 as usize] = true;
+                rim[edges[i].2 as usize] = true;
+            }
+            i = j;
+        }
+        // An alias on the rim locks the shared vertex it stands for.
+        for (&(_, v, _), &a) in &self.alias {
+            if rim[a as usize] {
+                rim[v as usize] = true;
+            }
+        }
+        self.locked = (0..n).map(|v| self.pinned[v] || rim[v]).collect();
     }
 
     /// Number of vertex ids, live or not.
@@ -203,6 +450,11 @@ impl Remesh {
 
     pub fn is_alive(&self, v: u32) -> bool {
         self.vertex_alive[v as usize]
+    }
+
+    /// Whether any live face uses `v`.
+    pub fn is_used(&self, v: u32) -> bool {
+        !self.incident[v as usize].is_empty()
     }
 
     /// Position in voxel units.
@@ -295,6 +547,9 @@ impl Remesh {
         if self.locked[v as usize] {
             return VertexKind::Locked;
         }
+        if self.fixed[v as usize] {
+            return VertexKind::Fixed;
+        }
         let mut junction = 0;
         for w in self.neighbours(v) {
             match self.edge_kind(v, w) {
@@ -310,12 +565,33 @@ impl Remesh {
         }
     }
 
+    /// Copy every alias `face` holds for `v` onto `onto`.
+    fn copy_aliases(&mut self, face: u32, v: u32, onto: u32) {
+        for side in [0, 1] {
+            if let Some(&a) = self.alias.get(&(face, v, side)) {
+                self.alias.insert((onto, v, side), a);
+            }
+        }
+    }
+
+    fn drop_aliases(&mut self, face: u32, v: u32) {
+        for side in [0, 1] {
+            self.alias.remove(&(face, v, side));
+        }
+    }
+
     // --- split -------------------------------------------------------------
 
     /// Split edge `(u, v)` at its midpoint. Every face on the edge is split,
     /// so a junction edge stays a junction edge on both sides. Returns the new
     /// vertex.
     pub fn split(&mut self, u: u32, v: u32) -> Option<u32> {
+        // An edge ending at a fixed vertex may be several edges to a label that
+        // sees that vertex as several; one new vertex on all of them would join
+        // that label's fans through it.
+        if self.fixed[u as usize] || self.fixed[v as usize] {
+            return None;
+        }
         let faces = self.edge_faces(u, v);
         if faces.is_empty() || faces.iter().any(|&f| self.face_locked(f)) {
             return None;
@@ -327,10 +603,8 @@ impl Remesh {
         self.incident.push(Vec::new());
         self.vertex_alive.push(true);
         self.locked.push(false);
-        self.suspect.push(false);
+        self.fixed.push(false);
         self.pinned.push(false);
-        self.cell.push(self.cell[u as usize]);
-        self.pinch.push(false);
 
         for f in faces {
             let t = self.faces[f as usize];
@@ -348,6 +622,10 @@ impl Remesh {
             self.front.push(self.front[f as usize]);
             self.back.push(self.back[f as usize]);
             self.face_alive.push(true);
+            // `b` moves from f to g; `c` is on both.
+            self.copy_aliases(f, b, g);
+            self.drop_aliases(f, b);
+            self.copy_aliases(f, c, g);
             let inc = &mut self.incident[b as usize];
             let slot = inc.iter().position(|&x| x == f).expect("b was on f");
             inc[slot] = g;
@@ -404,6 +682,12 @@ impl Remesh {
         }
         self.faces[fa as usize] = [p, u, q];
         self.faces[fb as usize] = [q, v, p];
+        // fa loses v and gains q; fb loses u and gains p. The two faces are one
+        // wall, so a corner means the same to each label on either.
+        self.drop_aliases(fa, v);
+        self.copy_aliases(fb, q, fa);
+        self.drop_aliases(fb, u);
+        self.copy_aliases(fa, p, fb);
         self.incident[u as usize].retain(|&f| f != fb);
         self.incident[v as usize].retain(|&f| f != fa);
         self.incident[p as usize].push(fb);
@@ -484,10 +768,10 @@ impl Remesh {
         // --- the link condition, for the whole mesh and for every label ------
         // Collapsing (u, v) keeps the topology exactly when the vertices
         // joined to both are precisely those opposite the edge. Asked of the
-        // whole mesh, and again of each label's surface alone: a vertex can be
-        // joined to both through one label's faces while the face opposite it
-        // on the edge belongs to another, and that label would come out
-        // pinched.
+        // whole mesh, and again of each label's surface alone, in that label's
+        // own identities: a vertex can be joined to both through one label's
+        // faces while the face opposite it on the edge belongs to another, and
+        // that label would come out pinched.
         let opposite = |f: u32| {
             self.faces[f as usize]
                 .into_iter()
@@ -517,15 +801,20 @@ impl Remesh {
                 labels.insert(self.back[f as usize]);
             }
         }
-        let has = |f: u32, l: u32| self.front[f as usize] == l || self.back[f as usize] == l;
         for &l in &labels {
+            // `u` and `v` are neither fixed nor aliased, so only their
+            // neighbours' identities can differ from the shared ids.
             let around = |x: u32| {
-                let mut n: Vec<u32> = self.incident[x as usize]
-                    .iter()
-                    .filter(|&&f| has(f, l))
-                    .flat_map(|&f| self.faces[f as usize])
-                    .filter(|&w| w != x)
-                    .collect();
+                let mut n: Vec<u32> = Vec::new();
+                for &f in &self.incident[x as usize] {
+                    if let Some(side) = self.side_of(f, l) {
+                        for w in self.faces[f as usize] {
+                            if w != x {
+                                n.push(self.identity(f, w, side));
+                            }
+                        }
+                    }
+                }
                 n.sort_unstable();
                 n.dedup();
                 n
@@ -538,8 +827,10 @@ impl Remesh {
                 .collect();
             let mut opp: Vec<u32> = dying
                 .iter()
-                .filter(|&&f| has(f, l))
-                .map(|&f| opposite(f))
+                .filter_map(|&f| {
+                    self.side_of(f, l)
+                        .map(|side| self.identity(f, opposite(f), side))
+                })
                 .collect();
             opp.sort_unstable();
             opp.dedup();
@@ -551,7 +842,10 @@ impl Remesh {
             // and `v` are two separate points of this label's surface, and
             // collapsing them glues it to itself -- which the link test above
             // cannot see, since both sides of it are then empty.
-            if !lu.is_empty() && !lv.is_empty() && !dying.iter().any(|&f| has(f, l)) {
+            if !lu.is_empty()
+                && !lv.is_empty()
+                && !dying.iter().any(|&f| self.side_of(f, l).is_some())
+            {
                 return false;
             }
         }
@@ -563,7 +857,6 @@ impl Remesh {
                 return false;
             }
         }
-
         // No two faces may end up on the same three vertices. The link
         // condition alone still allows collapsing a tetrahedron into a pair of
         // coincident triangles wound opposite ways -- a closed surface of two
@@ -593,6 +886,7 @@ impl Remesh {
         for &f in &dying {
             self.face_alive[f as usize] = false;
             for w in self.faces[f as usize] {
+                self.drop_aliases(f, w);
                 if w != u {
                     self.incident[w as usize].retain(|&g| g != f);
                 }
@@ -618,34 +912,16 @@ impl Remesh {
     // --- output --------------------------------------------------------------
 
     /// Label slot `slot`'s surface, as [`WallMesh::label_mesh`] gives it.
+    ///
+    /// Every label's identities are explicit, so the manifold repair never runs
+    /// here.
     pub fn label_mesh(&self, slot: u32, opts: &MeshOptions) -> TriangleMesh {
         let faces: Vec<[u32; 3]> = (0..self.faces.len())
             .filter(|&i| self.face_alive[i])
             .filter_map(|i| {
-                let f = self.faces[i];
-                let side = if self.front[i] == slot {
-                    0
-                } else if self.back[i] == slot {
-                    1
-                } else {
-                    return None;
-                };
-                // Faces touching a pinch are locked, so they still have the
-                // index their aliases were recorded under.
-                let corner = |k: usize| {
-                    let v = f[k];
-                    if self.pinch[v as usize] {
-                        let key = (3 * i as u64 + k as u64) * 2 + side;
-                        self.alias.get(&key).copied().unwrap_or(v)
-                    } else {
-                        v
-                    }
-                };
-                Some(if side == 0 {
-                    [corner(0), corner(1), corner(2)]
-                } else {
-                    [corner(0), corner(2), corner(1)]
-                })
+                let side = self.side_of(i as u32, slot)?;
+                let f = self.faces[i].map(|v| self.identity(i as u32, v, side));
+                Some(if side == 0 { f } else { [f[0], f[2], f[1]] })
             })
             .collect();
         if faces.is_empty() {
@@ -655,8 +931,8 @@ impl Remesh {
             self.voxel.len(),
             |v| self.voxel[v as usize],
             &faces,
-            |v| self.cell[v as usize],
-            |v| self.suspect[v as usize],
+            |_| 0,
+            |_| false,
             Some(&|v: u32| self.pinned[v as usize]),
             opts,
         )
@@ -787,40 +1063,93 @@ mod tests {
         (e, rm, opts)
     }
 
+    /// Each face as its sorted corner positions and whether sorting kept the
+    /// winding, so meshes can be compared whatever order they store things in.
+    fn signed_triangles(m: &TriangleMesh) -> Vec<([[u32; 3]; 3], bool)> {
+        let mut out: Vec<([[u32; 3]; 3], bool)> = m
+            .faces
+            .iter()
+            .map(|f| {
+                let c = f.map(|v| m.vertices[v as usize]);
+                let mut order = [0usize, 1, 2];
+                order.sort_by_key(|&k| c[k].map(f32::to_bits));
+                let even = matches!(order, [0, 1, 2] | [1, 2, 0] | [2, 0, 1]);
+                (order.map(|k| c[k].map(f32::to_bits)), even)
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Untouched, the editable mesh gives back exactly what `get()` does --
+    /// including at the ambiguous-cell vertices it split up front, which the
+    /// manifold repair no longer sees.
     #[test]
-    fn untouched_it_is_the_wall_mesh() {
-        let a = noisy(20, 6, 3);
+    fn untouched_it_is_what_get_returns() {
+        for seed in 0..10 {
+            let (n, labels) = [(16, 4), (24, 8), (32, 12)][seed as usize % 3];
+            for close in [true, false] {
+                let a = noisy(n, labels, seed);
+                let e = extract(&VolumeView::new(a.view(), close));
+                let walls = WallMesh::build(&e).unwrap();
+                let rm = Remesh::new(&walls, &e.cells, [1.0, 1.0, 1.0]);
+                let opts = MeshOptions {
+                    shape: [n, n, n],
+                    ..Default::default()
+                };
+                for (slot, raw) in e.meshes.iter().enumerate() {
+                    let want = crate::mesh::build(raw, &opts);
+                    let got = rm.label_mesh(slot as u32, &opts);
+                    assert_eq!(
+                        got.vertices.len(),
+                        want.vertices.len(),
+                        "seed {seed} slot {slot}"
+                    );
+                    assert_eq!(
+                        signed_triangles(&got),
+                        signed_triangles(&want),
+                        "seed {seed} slot {slot}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every ambiguous-cell vertex is resolved, by a split or by aliases, and
+    /// only a small share of vertices end up fixed.
+    #[test]
+    fn only_a_few_vertices_are_fixed() {
+        let a = noisy(32, 12, 5);
         let e = extract(&VolumeView::new(a.view(), true));
         let walls = WallMesh::build(&e).unwrap();
         let rm = Remesh::new(&walls, &e.cells, [1.0, 1.0, 1.0]);
-        let opts = MeshOptions {
-            shape: [20, 20, 20],
-            ..Default::default()
-        };
-        for s in 0..e.meshes.len() as u32 {
-            let a = walls.label_mesh(s, &e.cells, &opts);
-            let b = rm.label_mesh(s, &opts);
-            assert_eq!(a.vertices, b.vertices);
-            assert_eq!(a.faces, b.faces);
-        }
+        let used = (0..rm.vertex_count() as u32)
+            .filter(|&v| rm.is_used(v))
+            .count();
+        let fixed = (0..rm.vertex_count() as u32)
+            .filter(|&v| rm.is_used(v) && rm.vertex_kind(v) == VertexKind::Fixed)
+            .count();
+        assert!(fixed > 0, "fixture has nothing to fix");
+        assert!(fixed * 50 < used, "{fixed} of {used} fixed");
     }
 
     #[test]
     fn it_finds_walls_curves_and_corners() {
         let (_, rm, _) = setup(24, 6, 1, true);
-        let mut count = [0usize; 4];
+        let mut count = [0usize; 5];
         for v in 0..rm.vertex_count() as u32 {
-            if rm.incident[v as usize].is_empty() {
+            if !rm.is_used(v) {
                 continue;
             }
             count[rm.vertex_kind(v) as usize] += 1;
         }
-        let [locked, wall, curve, corner] = count;
+        let [locked, _fixed, wall, curve, corner] = count;
         assert!(wall > curve && curve > corner && corner > 0, "{count:?}");
-        assert!(locked > 0);
+        // A closed volume has no seam and no open rim to lock.
+        assert_eq!(locked, 0, "{count:?}");
         // Every curve vertex has exactly two curve neighbours, by definition.
         for v in 0..rm.vertex_count() as u32 {
-            if !rm.incident[v as usize].is_empty() && rm.vertex_kind(v) == VertexKind::Curve {
+            if rm.is_used(v) && rm.vertex_kind(v) == VertexKind::Curve {
                 assert_eq!(rm.curve_neighbours(v).len(), 2);
             }
         }

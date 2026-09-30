@@ -76,6 +76,10 @@ pub struct WallMesh {
     /// Aliases sit after the group's own vertices in `positions`, at the same
     /// place, so a label's surface keeps exactly its own vertex identities.
     pub alias: FxHashMap<u64, u32>,
+    /// `(vertex, label slot)` pairs, ascending: the vertices each label's own
+    /// mesh would hand to the manifold repair. Kept per label because the
+    /// repair splits a vertex for one label and not another.
+    pub label_suspect: Vec<(u32, u32)>,
 }
 
 /// Why a [`WallMesh`] could not be built.
@@ -247,6 +251,16 @@ impl WallMesh {
             }
             i = j;
         }
+
+        for (l, m) in e.meshes.iter().enumerate() {
+            for &v in &m.suspects {
+                walls
+                    .label_suspect
+                    .push((shared(&mut sets, l, v), l as u32));
+            }
+        }
+        walls.label_suspect.sort_unstable();
+        walls.label_suspect.dedup();
 
         // --- one triangulated copy of each wall -----------------------------
         let mut i = 0;

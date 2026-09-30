@@ -153,11 +153,9 @@ and pinches. Two points about them:
 - **The rim has to be judged per label.** Where one label's surface ends at the
   volume boundary, other labels' walls can still meet along the same edge, so
   the combined mesh shows no rim there. The fuzz tests found this too.
-- **It is a lot of the surface.** On the 192³ crop 2.0% of vertices are locked
-  and 5.9% of triangles touch one. That is harmless at full resolution, but at
-  a 10× reduction those triangles would be over half the output. Before 3c can
-  produce coarse levels, vertices from ambiguous cells need a real treatment
-  rather than a lock.
+- **It was a lot of the surface.** On the 192³ crop 2.0% of vertices were locked
+  and 5.9% of triangles touched one, which at a 10× reduction would have been
+  over half the output. Resolved in 3c; see below.
 
 Surfaces cut open by the volume boundary can touch that boundary at a single
 vertex. `get()` has always produced this for open volumes, in about 1 label in
@@ -168,3 +166,44 @@ remeshing cannot change them.
 Setting up `Remesh` takes 4.9 s on the 192³ crop, on top of 2.6 s to build the
 shared mesh. Both are single-threaded passes, and both are on the list to move
 into the extraction.
+
+### 3c, part 1: no more frozen patches
+
+Vertices from ambiguous cells were locked because extraction's manifold repair
+decides at them, per label, and needs to see their triangles unchanged. They are
+now resolved once, up front, when `Remesh` is built. In the repair's own order
+(by cell), each label's fans at the vertex are found the way its repair would
+find them, from that label's own view of its neighbours. Then:
+
+- **where every label agrees**, the vertex is split for real, one vertex per
+  group of fans;
+- **where they conflict**, and one label needs two vertices where another,
+  whose single fan touches both, needs one, the shared vertex stays and the
+  label that needs more gets an *alias* per extra fan. This is the same
+  mechanism the pinches of 3a use.
+
+Every label's vertex identities are then explicit, so extraction no longer runs
+the repair at all. A vertex with aliases is **fixed**: it never moves and
+nothing collapses into it, but the triangles around it can be split, flipped and
+collapsed, with its aliases carried onto them. Aliases are keyed by face, vertex
+and side rather than by corner, so they survive a triangle's corners being
+reordered. Splitting an edge that ends at a fixed vertex is refused, because a
+label seeing that vertex twice sees two edges there.
+
+Two things this took:
+
+- **An earlier attempt split what it could and locked the rest.** That left
+  36-44% of ambiguous vertices locked, and it could not match `get()`. The
+  repair splits an unresolvable vertex before reaching its neighbours, and
+  resolving those neighbours against the unsplit vertex decided differently.
+  Aliases resolve every vertex, so the order matches the repair's again.
+- **Suspects are per label.** The repair splits a vertex for one label and not
+  another, so the shared mesh now records each label's own suspects rather than
+  deriving them from the cell.
+
+On the 192³ crop, every one of the 1,692 labels still matches `get()` exactly,
+closed and open, with no repair at extraction. In the closed volume 0.38% of
+vertices are fixed and **no** triangle is frozen, against 5.9% before. Open, 2.2%
+of triangles stay frozen: the open rim and the chunk's outer cell layer, which
+3d addresses. The fuzz tests, now exercising operations around fixed vertices,
+pass 120 seeds of each variant.
