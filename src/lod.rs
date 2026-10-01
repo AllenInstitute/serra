@@ -80,9 +80,6 @@
 //! Single-threaded and visited in id order, so the result is a pure function of
 //! the input.
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-
 use rustc_hash::FxHashMap;
 
 use crate::extract::CellField;
@@ -267,14 +264,63 @@ fn widen(sign: f64) -> impl Fn(f64) -> f32 {
     move |x| (x + sign * (1e-6 * x.abs() + 1e-9)) as f32
 }
 
-/// Edges waiting to collapse, cheapest first: cost bits, the two ends, and
-/// each end's version when queued.
-type Queue = BinaryHeap<Reverse<(u64, u32, u32, u32, u32)>>;
+/// Edges waiting to collapse, roughly cheapest first: a bucket queue over the
+/// cost, which stays within a small range. Most entries go stale before
+/// they come up and are dropped, so a heap spends most of its time ordering
+/// entries nobody will use; buckets push and pop in constant time. Within a
+/// bucket, last in is first out. Each entry is the two ends and the low 16
+/// bits of each end's version when queued.
+struct Queue {
+    buckets: Vec<Vec<(u32, u32, u16, u16)>>,
+    /// No bucket below this one holds anything.
+    lowest: usize,
+}
+
+/// Buckets per unit of cost.
+const QUEUE_RESOLUTION: f64 = 2048.0;
+const QUEUE_BUCKETS: usize = 8192;
+
+impl Queue {
+    fn new() -> Queue {
+        Queue {
+            buckets: vec![Vec::new(); QUEUE_BUCKETS],
+            lowest: QUEUE_BUCKETS,
+        }
+    }
+
+    fn push(&mut self, cost: f64, a: u32, b: u32, va: u32, vb: u32) {
+        let i = ((cost * QUEUE_RESOLUTION) as usize).min(QUEUE_BUCKETS - 1);
+        self.buckets[i].push((a, b, va as u16, vb as u16));
+        self.lowest = self.lowest.min(i);
+    }
+
+    fn pop(&mut self) -> Option<(u32, u32, u16, u16)> {
+        while self.lowest < QUEUE_BUCKETS {
+            if let Some(e) = self.buckets[self.lowest].pop() {
+                return Some(e);
+            }
+            self.lowest += 1;
+        }
+        None
+    }
+}
 
 /// How strongly a collapse's new vertex is pulled toward the edge's middle,
 /// per unit of quadric area: enough to decide its place along a flat wall,
 /// little enough to leave it on a curved one.
 const REGULARITY: f64 = 0.05;
+
+/// [`VertexKind`]s by discriminant, for the cache in [`State::kind`].
+const KINDS: [VertexKind; 5] = [
+    VertexKind::Locked,
+    VertexKind::Fixed,
+    VertexKind::Wall,
+    VertexKind::Curve,
+    VertexKind::Corner,
+];
+
+/// A cached kind not yet worked out.
+const KIND_UNKNOWN: u8 = u8::MAX;
 
 /// A quadric `x^T A x + 2 b^T x + c`: `A` symmetric (upper triangle `a00 a01
 /// a02 a11 a12 a22`), then `b`, then `c`.
@@ -670,6 +716,10 @@ struct State<'a> {
     quadric: Vec<Quadric>,
     quadric_area: Vec<f64>,
     version: Vec<u32>,
+    /// Each vertex's kind, once asked for ([`KIND_UNKNOWN`] until then):
+    /// [`decimate`] asks for both ends of every edge it queues, many times
+    /// over, and a vertex's kind only changes when a collapse rewires it.
+    kinds: Vec<std::cell::Cell<u8>>,
     counts: Counts,
 }
 
@@ -746,6 +796,7 @@ fn run(
         quadric: Vec::new(),
         quadric_area: Vec::new(),
         version: Vec::new(),
+        kinds: Vec::new(),
         counts: Counts::default(),
     };
     state.rebuild_grid();
@@ -1337,19 +1388,30 @@ impl State<'_> {
             if !acceptable(&before, &after) {
                 return false;
             }
-            let Some(assignment) = self.fit(region, &survivors, Some((u, v, at)), None) else {
+            // Where `v` stays put, the faces around it that do not hold `u`
+            // keep their shape: their fine vertices are as close to them as
+            // before, and they cannot newly cross anything. Only the faces
+            // around `u` need looking at.
+            let stationary = at == self.pos(v);
+            let changed: Vec<u32> = if stationary {
+                self.rm.faces_around(u).to_vec()
+            } else {
+                region.to_vec()
+            };
+            let Some(assignment) = self.fit(&changed, &survivors, Some((u, v, at)), None) else {
                 self.counts.refused_for_error += 1;
                 return false;
             };
             let replaced: Vec<NewTri> = survivors
                 .iter()
                 .zip(&after)
+                .filter(|(&f, _)| changed.contains(&f))
                 .map(|(&f, t)| {
                     let ids = self.rm.face(f).unwrap().map(|w| if w == u { v } else { w });
                     (ids, *t, self.rm.labels(f))
                 })
                 .collect();
-            if self.adds_crossing(region, &replaced) {
+            if self.adds_crossing(&changed, &replaced) {
                 self.counts.refused_for_crossing += 1;
                 return false;
             }
@@ -1357,7 +1419,8 @@ impl State<'_> {
                 return false;
             }
             self.counts.collapses += 1;
-            self.commit(region, assignment);
+            self.commit(&changed, assignment);
+            self.forget_kinds(v);
             for &f in &dying {
                 self.grid.remove(f);
             }
@@ -1371,9 +1434,40 @@ impl State<'_> {
 
     // --- quadric decimation ---------------------------------------------------
 
+    /// Vertex `v`'s kind, from the cache where there is one.
+    fn kind(&self, v: u32) -> VertexKind {
+        let Some(cell) = self.kinds.get(v as usize) else {
+            return self.rm.vertex_kind(v);
+        };
+        let k = match cell.get() {
+            KIND_UNKNOWN => {
+                let k = self.rm.vertex_kind(v);
+                cell.set(k as u8);
+                return k;
+            }
+            k => k,
+        };
+        KINDS[k as usize]
+    }
+
+    /// Drop the cached kinds a collapse into `v` may have changed: `v`'s and
+    /// its neighbours', whose edges to it were rewired.
+    fn forget_kinds(&mut self, v: u32) {
+        if self.kinds.is_empty() {
+            return;
+        }
+        self.kinds[v as usize].set(KIND_UNKNOWN);
+        for &f in self.rm.faces_around(v) {
+            for w in self.rm.face(f).unwrap() {
+                self.kinds[w as usize].set(KIND_UNKNOWN);
+            }
+        }
+    }
+
     /// Each vertex's quadric from the faces around it as they are now.
     fn init_quadrics(&mut self) {
         let n = self.rm.vertex_count();
+        self.kinds = (0..n).map(|_| std::cell::Cell::new(KIND_UNKNOWN)).collect();
         self.quadric = vec![[0.0; 10]; n];
         self.quadric_area = vec![0.0; n];
         self.version = vec![0; n];
@@ -1406,7 +1500,7 @@ impl State<'_> {
             VertexKind::Fixed => 3,
             VertexKind::Locked => 4,
         };
-        let (ka, kb) = (self.rm.vertex_kind(a), self.rm.vertex_kind(b));
+        let (ka, kb) = (self.kind(a), self.kind(b));
         let (u, v, ku, kv) = if rank(ka) <= rank(kb) {
             (a, b, ka, kb)
         } else {
@@ -1463,13 +1557,13 @@ impl State<'_> {
     fn queue_edge(&self, heap: &mut Queue, a: u32, b: u32) {
         let (a, b) = (a.min(b), a.max(b));
         if let Some((_, _, _, cost)) = self.plan(a, b) {
-            heap.push(Reverse((
-                cost.to_bits(),
+            heap.push(
+                cost,
                 a,
                 b,
                 self.version[a as usize],
                 self.version[b as usize],
-            )));
+            );
         }
     }
 
@@ -1480,15 +1574,15 @@ impl State<'_> {
     /// dropped.
     fn decimate_pass(&mut self) {
         self.init_quadrics();
-        let mut heap = BinaryHeap::new();
+        let mut heap = Queue::new();
         for (a, b) in self.edges() {
             self.queue_edge(&mut heap, a, b);
         }
-        while let Some(Reverse((_, a, b, va, vb))) = heap.pop() {
+        while let Some((a, b, va, vb)) = heap.pop() {
             if !self.rm.is_used(a)
                 || !self.rm.is_used(b)
-                || self.version[a as usize] != va
-                || self.version[b as usize] != vb
+                || self.version[a as usize] as u16 != va
+                || self.version[b as usize] as u16 != vb
             {
                 continue;
             }
