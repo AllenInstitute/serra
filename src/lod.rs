@@ -80,6 +80,9 @@
 //! Single-threaded and visited in id order, so the result is a pure function of
 //! the input.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use rustc_hash::FxHashMap;
 
 use crate::extract::CellField;
@@ -262,6 +265,80 @@ fn bounds(t: &[[f64; 3]; 3]) -> ([f64; 3], [f64; 3]) {
 /// boxes compared in single precision never shrink by the conversion.
 fn widen(sign: f64) -> impl Fn(f64) -> f32 {
     move |x| (x + sign * (1e-6 * x.abs() + 1e-9)) as f32
+}
+
+/// Edges waiting to collapse, cheapest first: cost bits, the two ends, and
+/// each end's version when queued.
+type Queue = BinaryHeap<Reverse<(u64, u32, u32, u32, u32)>>;
+
+/// How strongly a collapse's new vertex is pulled toward the edge's middle,
+/// per unit of quadric area: enough to decide its place along a flat wall,
+/// little enough to leave it on a curved one.
+const REGULARITY: f64 = 0.05;
+
+/// A quadric `x^T A x + 2 b^T x + c`: `A` symmetric (upper triangle `a00 a01
+/// a02 a11 a12 a22`), then `b`, then `c`.
+type Quadric = [f64; 10];
+
+/// Area times squared distance to the plane through `o` with unit normal `n`.
+fn plane_quadric(n: [f64; 3], o: [f64; 3], area: f64) -> Quadric {
+    let d = -dot(n, o);
+    [
+        area * n[0] * n[0],
+        area * n[0] * n[1],
+        area * n[0] * n[2],
+        area * n[1] * n[1],
+        area * n[1] * n[2],
+        area * n[2] * n[2],
+        area * n[0] * d,
+        area * n[1] * d,
+        area * n[2] * d,
+        area * d * d,
+    ]
+}
+
+fn quadric_add(a: &Quadric, b: &Quadric) -> Quadric {
+    std::array::from_fn(|i| a[i] + b[i])
+}
+
+fn quadric_eval(q: &Quadric, x: [f64; 3]) -> f64 {
+    let ax = [
+        q[0] * x[0] + q[1] * x[1] + q[2] * x[2],
+        q[1] * x[0] + q[3] * x[1] + q[4] * x[2],
+        q[2] * x[0] + q[4] * x[1] + q[5] * x[2],
+    ];
+    (dot(x, ax) + 2.0 * (q[6] * x[0] + q[7] * x[1] + q[8] * x[2]) + q[9]).max(0.0)
+}
+
+/// The point minimising `q` plus `w |x - m|^2`: the plane quadrics fix the
+/// position across the surface, and the small pull toward `m` decides it
+/// along the surface, where the planes alone do not care -- which is where
+/// plain QEM leaves its slivers.
+fn quadric_minimum(q: &Quadric, m: [f64; 3], w: f64) -> Option<[f64; 3]> {
+    let a = [
+        [q[0] + w, q[1], q[2]],
+        [q[1], q[3] + w, q[4]],
+        [q[2], q[4], q[5] + w],
+    ];
+    let r = [w * m[0] - q[6], w * m[1] - q[7], w * m[2] - q[8]];
+    let det3 = |m: &[[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let det = det3(&a);
+    if det.abs() <= f64::MIN_POSITIVE {
+        return None;
+    }
+    // Cramer's rule: column `k` replaced by the right-hand side.
+    let x: [f64; 3] = std::array::from_fn(|k| {
+        let mut mk = a;
+        for (row, &ri) in mk.iter_mut().zip(&r) {
+            row[k] = ri;
+        }
+        det3(&mk) / det
+    });
+    x.iter().all(|v| v.is_finite()).then_some(x)
 }
 
 /// A triangle an operation would make: its vertex ids, corners and wall.
@@ -587,6 +664,12 @@ struct State<'a> {
     parted: Vec<bool>,
     /// How far past a plane a point must be to count as through it.
     tol: f64,
+    /// Per coarse vertex, for [`decimate`]: the sum of its fine faces' plane
+    /// quadrics, their area, and a count of the changes to it, which tells a
+    /// queued edge whether it is stale.
+    quadric: Vec<Quadric>,
+    quadric_area: Vec<f64>,
+    version: Vec<u32>,
     counts: Counts,
 }
 
@@ -607,7 +690,7 @@ pub fn level(
     };
     rm.shrink_contacts(params.drop_small_contacts);
     let reference = Reference::new(&rm);
-    let mut counts = run(&mut rm, &reference, params, &separated);
+    let mut counts = run(&mut rm, &reference, params, &separated, false);
     counts.separated = separated.len();
     (rm, counts)
 }
@@ -618,7 +701,15 @@ pub fn level(
 /// contacts are left alone here whatever the parameters say: separating them
 /// changes what the reference is, so [`level`] does it before making one.
 pub fn remesh(rm: &mut Remesh, reference: &Reference, params: &LevelParams) -> Counts {
-    run(rm, reference, params, &[])
+    run(rm, reference, params, &[], false)
+}
+
+/// Like [`remesh`], but coarsened by quadric-ordered edge collapse instead of
+/// rounds of split, collapse, flip and relax: one pass over a priority queue,
+/// under the same rules and bounds, then `params.iterations` rounds of flips
+/// and relaxing only.
+pub fn decimate(rm: &mut Remesh, reference: &Reference, params: &LevelParams) -> Counts {
+    run(rm, reference, params, &[], true)
 }
 
 fn run(
@@ -626,6 +717,7 @@ fn run(
     reference: &Reference,
     params: &LevelParams,
     separated: &[Separated],
+    by_quadric: bool,
 ) -> Counts {
     let mut on_face: Vec<Vec<u32>> = vec![Vec::new(); rm.face_count()];
     let mut face = vec![u32::MAX; reference.samples.len()];
@@ -651,10 +743,25 @@ fn run(
         seen: Default::default(),
         parted: Vec::new(),
         tol: 1e-6 * params.max_length,
+        quadric: Vec::new(),
+        quadric_area: Vec::new(),
+        version: Vec::new(),
         counts: Counts::default(),
     };
     state.rebuild_grid();
     state.part(separated);
+    if by_quadric {
+        state.refresh_sizes();
+        state.decimate_pass();
+        for _ in 0..params.iterations {
+            state.refresh_sizes();
+            state.rebuild_grid();
+            state.flip_pass(false);
+            state.relax_pass();
+            state.flip_pass(true);
+        }
+        return state.counts;
+    }
     for _ in 0..params.iterations {
         state.refresh_sizes();
         state.split_pass();
@@ -1184,17 +1291,35 @@ impl State<'_> {
             } else {
                 self.pos(v)
             };
-            // Botsch & Kobbelt: never create an edge that would itself be split.
-            // Except to remove an edge already shorter than the level's
-            // minimum, which should go whatever it leaves.
-            let long =
-                len >= self.params.min_length
-                    && self.rm.neighbours(u).into_iter().any(|w| {
-                        w != v && norm(sub(at, self.pos(w))) > 4.0 / 3.0 * self.target(v, w)
-                    });
-            if long {
-                continue;
-            }
+            self.attempt_collapse(u, v, at, len, &region, parted);
+        }
+    }
+
+    /// Collapse `u` into `v`, leaving `v` at `at`, if that creates no edge the
+    /// level would split, leaves the triangles acceptable, keeps the bound and
+    /// adds no crossing. `region` is the faces around both.
+    fn attempt_collapse(
+        &mut self,
+        u: u32,
+        v: u32,
+        at: [f64; 3],
+        len: f64,
+        region: &[u32],
+        parted: bool,
+    ) -> bool {
+        // Botsch & Kobbelt: never create an edge that would itself be split.
+        // Except to remove an edge already shorter than the level's minimum,
+        // which should go whatever it leaves.
+        let long = len >= self.params.min_length
+            && self
+                .rm
+                .neighbours(u)
+                .into_iter()
+                .any(|w| w != v && norm(sub(at, self.pos(w))) > 4.0 / 3.0 * self.target(v, w));
+        if long {
+            return false;
+        }
+        {
             let dying = self.rm.edge_faces(u, v);
             let survivors: Vec<u32> = region
                 .iter()
@@ -1210,11 +1335,11 @@ impl State<'_> {
                 .map(|&f| self.triangle_with(f, Some((u, v, at))))
                 .collect();
             if !acceptable(&before, &after) {
-                continue;
+                return false;
             }
-            let Some(assignment) = self.fit(&region, &survivors, Some((u, v, at)), None) else {
+            let Some(assignment) = self.fit(region, &survivors, Some((u, v, at)), None) else {
                 self.counts.refused_for_error += 1;
-                continue;
+                return false;
             };
             let replaced: Vec<NewTri> = survivors
                 .iter()
@@ -1224,20 +1349,168 @@ impl State<'_> {
                     (ids, *t, self.rm.labels(f))
                 })
                 .collect();
-            if self.adds_crossing(&region, &replaced) {
+            if self.adds_crossing(region, &replaced) {
                 self.counts.refused_for_crossing += 1;
+                return false;
+            }
+            if !self.rm.collapse(u, v, self.rm.to_voxel(at)) {
+                return false;
+            }
+            self.counts.collapses += 1;
+            self.commit(region, assignment);
+            for &f in &dying {
+                self.grid.remove(f);
+            }
+            self.reindex(v);
+            if parted {
+                self.mark_parted(v);
+            }
+            true
+        }
+    }
+
+    // --- quadric decimation ---------------------------------------------------
+
+    /// Each vertex's quadric from the faces around it as they are now.
+    fn init_quadrics(&mut self) {
+        let n = self.rm.vertex_count();
+        self.quadric = vec![[0.0; 10]; n];
+        self.quadric_area = vec![0.0; n];
+        self.version = vec![0; n];
+        for f in 0..self.rm.face_count() as u32 {
+            let Some(t) = self.rm.face(f) else { continue };
+            let tri = self.triangle_with(f, None);
+            let plane = Plane::of(&tri);
+            let area = 0.5 * norm(cross(sub(tri[1], tri[0]), sub(tri[2], tri[0])));
+            let q = plane_quadric(plane.n, plane.o, area);
+            for w in t {
+                self.quadric[w as usize] = quadric_add(&self.quadric[w as usize], &q);
+                self.quadric_area[w as usize] += area;
+            }
+        }
+    }
+
+    /// Which end of edge `(a, b)` would go, into which, where the survivor
+    /// would end up, and at what cost; `None` if the edge is long enough or
+    /// neither end may go.
+    fn plan(&self, a: u32, b: u32) -> Option<(u32, u32, [f64; 3], f64)> {
+        let len = norm(sub(self.pos(a), self.pos(b)));
+        let target = self.target(a, b);
+        if len >= 4.0 / 5.0 * target {
+            return None;
+        }
+        let rank = |k: VertexKind| match k {
+            VertexKind::Wall => 0,
+            VertexKind::Curve => 1,
+            VertexKind::Corner => 2,
+            VertexKind::Fixed => 3,
+            VertexKind::Locked => 4,
+        };
+        let (ka, kb) = (self.rm.vertex_kind(a), self.rm.vertex_kind(b));
+        let (u, v, ku, kv) = if rank(ka) <= rank(kb) {
+            (a, b, ka, kb)
+        } else {
+            (b, a, kb, ka)
+        };
+        let movable = matches!(ku, VertexKind::Wall | VertexKind::Curve)
+            || (ku == VertexKind::Corner && matches!(kv, VertexKind::Corner | VertexKind::Fixed));
+        if !movable {
+            return None;
+        }
+        let q = quadric_add(&self.quadric[u as usize], &self.quadric[v as usize]);
+        let area = self.quadric_area[u as usize] + self.quadric_area[v as usize];
+        let (pu, pv) = (self.pos(u), self.pos(v));
+        let mid = scale(add(pu, pv), 0.5);
+        let at = match (ku, kv) {
+            (VertexKind::Wall, VertexKind::Wall) if !self.is_parted(u) && !self.is_parted(v) => {
+                quadric_minimum(&q, mid, REGULARITY * area).unwrap_or(mid)
+            }
+            (VertexKind::Wall, VertexKind::Wall) => mid,
+            // Along a curve: the best of its ends and its middle.
+            (VertexKind::Curve, VertexKind::Curve)
+                if self.rm.edge_kind(u, v) == EdgeKind::Junction =>
+            {
+                [pu, pv, mid]
+                    .into_iter()
+                    .min_by(|x, y| quadric_eval(&q, *x).total_cmp(&quadric_eval(&q, *y)))
+                    .unwrap()
+            }
+            _ => pv,
+        };
+        let e = self.params.max_error;
+        let cost = quadric_eval(&q, at) / area.max(f64::MIN_POSITIVE) / (e * e)
+            + (len / target) * (len / target);
+        cost.is_finite().then_some((u, v, at, cost))
+    }
+
+    /// Target length at `v`: the mean over the fine vertices on its faces.
+    fn size_at(&self, v: u32) -> f64 {
+        let (mut sum, mut count) = (0.0, 0usize);
+        for &f in self.rm.faces_around(v) {
+            for &sample in &self.track.on_face[f as usize] {
+                let fine = self.reference.samples[sample as usize].0;
+                sum += self.reference.size(fine, &self.params);
+                count += 1;
+            }
+        }
+        if count > 0 {
+            sum / count as f64
+        } else {
+            self.params.max_length
+        }
+    }
+
+    fn queue_edge(&self, heap: &mut Queue, a: u32, b: u32) {
+        let (a, b) = (a.min(b), a.max(b));
+        if let Some((_, _, _, cost)) = self.plan(a, b) {
+            heap.push(Reverse((
+                cost.to_bits(),
+                a,
+                b,
+                self.version[a as usize],
+                self.version[b as usize],
+            )));
+        }
+    }
+
+    /// Collapse edges cheapest first -- quadric error, plus how short the edge
+    /// is for its target -- each under the same checks as [`State::collapse_pass`].
+    /// A collapse merges the two quadrics and queues the survivor's edges
+    /// again; entries left over from before are recognised by version and
+    /// dropped.
+    fn decimate_pass(&mut self) {
+        self.init_quadrics();
+        let mut heap = BinaryHeap::new();
+        for (a, b) in self.edges() {
+            self.queue_edge(&mut heap, a, b);
+        }
+        while let Some(Reverse((_, a, b, va, vb))) = heap.pop() {
+            if !self.rm.is_used(a)
+                || !self.rm.is_used(b)
+                || self.version[a as usize] != va
+                || self.version[b as usize] != vb
+            {
                 continue;
             }
-            if self.rm.collapse(u, v, self.rm.to_voxel(at)) {
-                self.counts.collapses += 1;
-                self.commit(&region, assignment);
-                for &f in &dying {
-                    self.grid.remove(f);
-                }
-                self.reindex(v);
-                if parted {
-                    self.mark_parted(v);
-                }
+            let Some((u, v, at, _)) = self.plan(a, b) else {
+                continue;
+            };
+            let len = norm(sub(self.pos(u), self.pos(v)));
+            let mut region: Vec<u32> = self.rm.faces_around(u).to_vec();
+            region.extend_from_slice(self.rm.faces_around(v));
+            region.sort_unstable();
+            region.dedup();
+            let parted = self.is_parted(u) || self.is_parted(v);
+            if !self.attempt_collapse(u, v, at, len, &region, parted) {
+                continue;
+            }
+            self.quadric[v as usize] =
+                quadric_add(&self.quadric[u as usize], &self.quadric[v as usize]);
+            self.quadric_area[v as usize] += self.quadric_area[u as usize];
+            self.version[v as usize] += 1;
+            self.size[v as usize] = self.size_at(v);
+            for w in self.rm.neighbours(v) {
+                self.queue_edge(&mut heap, v, w);
             }
         }
     }
@@ -1771,7 +2044,7 @@ mod tests {
             rm.shrink_contacts(true);
             let reference = Reference::new(&rm);
             let before = crossing_pairs(&fine);
-            super::run(&mut rm, &reference, &params, &done);
+            super::run(&mut rm, &reference, &params, &done, false);
             let after = crossing_pairs(&rm);
             assert!(
                 after <= before,
@@ -1892,6 +2165,43 @@ mod tests {
             dropped += fine.len() - loose.len();
         }
         assert!(dropped > 0, "{kept} pairs kept, none dropped");
+    }
+
+    /// Quadric decimation keeps every label's bound and topology and adds no
+    /// crossing, like remeshing.
+    #[test]
+    fn decimating_keeps_every_bound_and_adds_no_crossings() {
+        let params = LevelParams {
+            max_length: 3.0,
+            min_length: 0.5,
+            max_error: 0.15,
+            iterations: 1,
+            drop_small_contacts: false,
+        };
+        for seed in 0..3 {
+            let a = noisy(22, 8, seed);
+            let e = faired(&a, true);
+            let walls = WallMesh::build(&e).unwrap();
+            let fine = Remesh::new(&walls, &e.cells, [1.0; 3]);
+            let mut rm = Remesh::new(&walls, &e.cells, [1.0; 3]);
+            let reference = Reference::new(&rm);
+            let counts = decimate(&mut rm, &reference, &params);
+            assert!(counts.collapses > 100, "{counts:?}");
+            assert!(crossing_pairs(&rm) <= crossing_pairs(&fine), "seed {seed}");
+            let o = opts(&a);
+            for s in 0..e.meshes.len() as u32 {
+                let (before, after) = (fine.label_mesh(s, &o), rm.label_mesh(s, &o));
+                if after.faces.is_empty() {
+                    continue;
+                }
+                let err = max_distance(&before, &after);
+                assert!(
+                    err <= params.max_error + 1e-4,
+                    "seed {seed} slot {s}: {err}"
+                );
+                assert_eq!(euler(&after), euler(&before), "seed {seed} slot {s}");
+            }
+        }
     }
 
     #[test]
